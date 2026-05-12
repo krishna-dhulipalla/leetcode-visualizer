@@ -119,9 +119,9 @@ def annotation_name(annotation: Any) -> str:
 
 def convert_arg(param_name: str, value: Any, annotation: Any, named: dict[str, Any]) -> Any:
     hint = annotation_name(annotation)
-    if "ListNode" in hint or param_name in {"head", "list"} and isinstance(value, list):
+    if ("ListNode" in hint or param_name in {"head", "list"}) and isinstance(value, list):
         return build_linked_list(value, named.get("pos"))
-    if "TreeNode" in hint or param_name in {"root", "tree"} and isinstance(value, list):
+    if ("TreeNode" in hint or param_name in {"root", "tree"}) and isinstance(value, list):
         return build_tree(value)
     return value
 

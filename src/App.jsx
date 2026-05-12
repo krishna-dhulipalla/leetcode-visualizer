@@ -77,7 +77,7 @@ function clamp(value, min, max) {
 }
 
 function valueLabel(value) {
-  if (!value) return "undefined";
+  if (value === undefined || value === null) return "undefined";
   if (value.label !== undefined) return value.label;
   if (value.type === "array" || value.type === "tuple") {
     return `[${value.value.map(valueLabel).join(", ")}]`;
@@ -215,8 +215,14 @@ function changedNames(current, previous) {
 }
 
 function CodeEditor({ code, setCode, currentLine }) {
+  const gutterRef = useRef(null);
   const lineCount = Math.max(code.split("\n").length, 18);
   const lines = Array.from({ length: lineCount }, (_, index) => index + 1);
+  const syncGutterScroll = (event) => {
+    if (gutterRef.current) {
+      gutterRef.current.scrollTop = event.currentTarget.scrollTop;
+    }
+  };
 
   return (
     <section className="panel code-panel">
@@ -225,7 +231,7 @@ function CodeEditor({ code, setCode, currentLine }) {
         <span className="file-status">solution.py <span /></span>
       </div>
       <div className="editor-shell">
-        <div className="line-gutter" aria-hidden="true">
+        <div className="line-gutter" ref={gutterRef} aria-hidden="true">
           {lines.map((line) => (
             <div key={line} className={line === currentLine ? "active-line" : ""}>
               {line}
@@ -237,6 +243,7 @@ function CodeEditor({ code, setCode, currentLine }) {
           wrap="off"
           value={code}
           onChange={(event) => setCode(event.target.value)}
+          onScroll={syncGutterScroll}
           aria-label="Python solution code"
         />
       </div>

@@ -323,6 +323,7 @@ svg {
   background: #0b1016;
   color: var(--muted);
   font: 12px/1.48 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  overflow: hidden;
   text-align: right;
 }
 
