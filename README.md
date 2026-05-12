@@ -1,19 +1,30 @@
 # LeetCode Solution Visualizer
 
-A local React app for replaying Python LeetCode solutions step by step. The app runs the submitted solution through a small Python trace runner and records locals after executed lines, then visualizes arrays, linked lists, trees, maps, sets, scalars, and return values.
+LeetCode Solution Visualizer helps programmers understand how their Python solutions change state while they run. Instead of reading a long raw trace or mentally simulating every line, users can replay the execution and inspect the variables, arrays, maps, sets, and return values at each meaningful snapshot.
 
-## Run
+The goal is to make debugging and learning easier for LeetCode-style problems. The app focuses on what changed in memory, so users can see how their data structures evolve across loops, conditions, stack operations, pointer movement, and final returns.
+
+## What It Does
+
+- Runs a Python `Solution` method or top-level function against a LeetCode-style testcase.
+- Captures execution snapshots from a deterministic Python trace runner.
+- Visualizes arrays, linked lists, trees, maps, sets, scalars, and return values.
+- Provides multiple trace modes:
+  - `Updates`: focuses on snapshots where variables or data structures changed.
+  - `Flow`: includes updates plus branch, loop, and return context.
+  - `Raw`: shows the full executed-line trace.
+- Lets users replay, step through, scrub, and inspect the solution state without relying on LLM-generated explanations.
+
+## Development
 
 ```powershell
 npm install
 npm run dev
 ```
 
-The app is served at `http://localhost:5173`.
+`npm run dev` builds the React frontend and starts the trace API. Use `npm run build` after frontend edits, then `npm run start` to serve the existing build.
 
-`npm run dev` builds the React frontend and starts the local trace API. Use `npm run build` after frontend edits, then `npm run start` to serve the existing build.
-
-## Current Scope
+## Supported Inputs
 
 - Python `class Solution` methods and top-level functions.
 - Standard LeetCode-style inputs as either named lines:

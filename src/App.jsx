@@ -96,6 +96,50 @@ function stableValue(value) {
   }
 }
 
+const TRACE_MODES = {
+  updates: "updates",
+  flow: "flow",
+  raw: "raw"
+};
+
+const TRACE_MODE_OPTIONS = [
+  { value: TRACE_MODES.updates, label: "Updates" },
+  { value: TRACE_MODES.flow, label: "Flow" },
+  { value: TRACE_MODES.raw, label: "Raw" }
+];
+
+function isFlowLine(lineText = "") {
+  return /^(if|elif|else|for|while|return|break|continue)\b/.test(lineText.trim());
+}
+
+function annotateTraceFrame(frame, index, frames) {
+  const previousFrame = frames[index - 1];
+  const changed = index === 0 ? [] : [...changedNames(frame.locals, previousFrame?.locals)];
+  const changeSource = previousFrame && changed.length ? previousFrame : null;
+
+  return {
+    ...frame,
+    rawIndex: index,
+    changed,
+    displayLine: changeSource?.line ?? frame.line,
+    displayLineText: changeSource?.lineText ?? frame.lineText,
+    displayMode: index === 0 ? "initial" : changeSource ? "update" : frame.event === "return" ? "return" : "line"
+  };
+}
+
+function buildTraceFrames(frames, mode) {
+  const annotated = frames.map((frame, index) => annotateTraceFrame(frame, index, frames));
+  if (mode === TRACE_MODES.raw) return annotated;
+
+  const filtered = annotated.filter((frame, index) => {
+    if (index === 0 || frame.event === "return") return true;
+    if (frame.changed.length > 0) return true;
+    return mode === TRACE_MODES.flow && isFlowLine(frame.lineText);
+  });
+
+  return filtered.length ? filtered : annotated;
+}
+
 function useTracePlayback(frames) {
   const [step, setStep] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -292,14 +336,23 @@ function MapPanel({ variables, changed }) {
 function Visualization({ frame, previousFrame, sourceLines }) {
   const groups = useMemo(() => categorizeVariables(frame?.locals), [frame]);
   const changed = useMemo(() => changedNames(frame?.locals, previousFrame?.locals), [frame, previousFrame]);
-  const lineText = frame?.lineText || "";
+  const lineText = frame?.displayLineText || frame?.lineText || "";
+  const lineNumber = frame?.displayLine ?? frame?.line;
+  const stateLabel =
+    frame?.displayMode === "initial"
+      ? "Initial state at line"
+      : frame?.displayMode === "update"
+        ? "State after line"
+        : frame?.event === "return"
+          ? "Returned at line"
+          : "Executing line";
 
   return (
     <div className="visual-grid">
       <div className="execution-strip">
-        <span>Executing line {frame?.line ?? "-"}</span>
-        <code>{lineText.trim() || sourceLines?.[frame?.line - 1] || "Waiting for trace"}</code>
-        <em>Current Line</em>
+        <span>{stateLabel} {lineNumber ?? "-"}</span>
+        <code>{lineText.trim() || sourceLines?.[lineNumber - 1] || "Waiting for trace"}</code>
+        <em>{frame?.changed?.length ? `Changed ${frame.changed.join(", ")}` : "Current State"}</em>
       </div>
 
       <section className="panel data-panel arrays-panel">
@@ -347,7 +400,7 @@ function Visualization({ frame, previousFrame, sourceLines }) {
   );
 }
 
-function Playback({ frames, playback }) {
+function Playback({ frames, rawCount, playback, traceMode, setTraceMode }) {
   const { step, setStep, isPlaying, setIsPlaying, speed, setSpeed } = playback;
   const max = Math.max(frames.length - 1, 0);
 
@@ -371,8 +424,17 @@ function Playback({ frames, playback }) {
         ))}
       </div>
 
+      <div className="mode-group" aria-label="Trace mode">
+        {TRACE_MODE_OPTIONS.map((option) => (
+          <button key={option.value} className={traceMode === option.value ? "selected" : ""} type="button" onClick={() => setTraceMode(option.value)}>
+            {option.label}
+          </button>
+        ))}
+      </div>
+
       <div className="step-count">
-        Step {frames.length ? step + 1 : 0} / {frames.length}
+        Snapshot {frames.length ? step + 1 : 0} / {frames.length}
+        {rawCount && rawCount !== frames.length ? <small>{rawCount} raw</small> : null}
       </div>
 
       <input
@@ -389,22 +451,23 @@ function Playback({ frames, playback }) {
   );
 }
 
-function TraceLog({ frames, currentStep, setStep }) {
+function TraceLog({ frames, currentRawStep, selectRawStep, isOpen, setIsOpen }) {
   return (
-    <section className="panel trace-log">
-      <div className="panel-header">
-        <span>Trace / Event Log</span>
-      </div>
-      <div className="log-list">
+    <section className={`panel trace-log ${isOpen ? "expanded" : ""}`}>
+      <button className="trace-log-toggle" type="button" onClick={() => setIsOpen((open) => !open)}>
+        <span>Raw Trace / Event Log</span>
+        <strong>{isOpen ? "Hide" : "Show"} {frames.length} snapshots</strong>
+      </button>
+      {isOpen ? <div className="log-list">
         {frames.length === 0 ? (
           <div className="empty-log">Run the trace to see each executed line.</div>
         ) : (
           frames.map((frame, index) => (
             <button
               type="button"
-              className={`log-row ${index === currentStep ? "selected" : ""}`}
+              className={`log-row ${index === currentRawStep ? "selected" : ""}`}
               key={`${frame.line}-${index}`}
-              onClick={() => setStep(index)}
+              onClick={() => selectRawStep(index)}
             >
               <span className="log-index">{index + 1}</span>
               <span className="log-message">
@@ -414,7 +477,7 @@ function TraceLog({ frames, currentStep, setStep }) {
             </button>
           ))
         )}
-      </div>
+      </div> : null}
     </section>
   );
 }
@@ -448,10 +511,19 @@ function App() {
   const [trace, setTrace] = useState(null);
   const [error, setError] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const playback = useTracePlayback(trace?.frames || []);
-  const currentFrame = trace?.frames?.[playback.step];
-  const previousFrame = trace?.frames?.[playback.step - 1];
+  const [isRawLogOpen, setIsRawLogOpen] = useState(false);
+  const [traceMode, setTraceMode] = useState(TRACE_MODES.updates);
+  const rawFrames = trace?.frames || [];
+  const visibleFrames = useMemo(() => buildTraceFrames(rawFrames, traceMode), [rawFrames, traceMode]);
+  const playback = useTracePlayback(visibleFrames);
+  const currentFrame = visibleFrames[playback.step];
+  const previousFrame = visibleFrames[playback.step - 1];
   const abortRef = useRef(null);
+
+  function selectRawStep(rawIndex) {
+    const visibleIndex = visibleFrames.findIndex((frame) => frame.rawIndex >= rawIndex);
+    playback.setStep(visibleIndex >= 0 ? visibleIndex : visibleFrames.length - 1);
+  }
 
   async function runTrace() {
     setIsRunning(true);
@@ -473,6 +545,7 @@ function App() {
         return;
       }
       setTrace(payload);
+      setIsRawLogOpen(false);
     } catch (requestError) {
       if (requestError.name !== "AbortError") {
         setTrace(null);
@@ -490,12 +563,8 @@ function App() {
           <span className="brand-mark">C</span>
           <strong>LeetCode Solution Visualizer</strong>
         </div>
-        <label className="problem-select">
-          <span>Problem</span>
-          <input defaultValue="875. Koko Eating Bananas" />
-        </label>
         <label className="language-select">
-          <span>Language</span>
+          <span>Language:</span>
           <select defaultValue="python">
             <option value="python">Python</option>
           </select>
@@ -512,7 +581,7 @@ function App() {
 
       <div className="workspace">
         <div className="left-column">
-          <CodeEditor code={code} setCode={setCode} currentLine={currentFrame?.line} />
+          <CodeEditor code={code} setCode={setCode} currentLine={currentFrame?.displayLine ?? currentFrame?.line} />
           <TextInputPanel
             title="Testcase Input"
             value={testcase}
@@ -532,11 +601,19 @@ function App() {
         <section className="panel right-column">
           <div className="panel-header">
             <span>Trace / Visualization</span>
-            <span className="trace-meta">{trace?.frames?.length || 0} snapshots</span>
+            <button className="raw-log-shortcut" type="button" onClick={() => setIsRawLogOpen((open) => !open)} disabled={!rawFrames.length}>
+              {isRawLogOpen ? "Hide raw log" : `${rawFrames.length} raw snapshots`}
+            </button>
           </div>
-          <Playback frames={trace?.frames || []} playback={playback} />
+          <Playback frames={visibleFrames} rawCount={rawFrames.length} playback={playback} traceMode={traceMode} setTraceMode={setTraceMode} />
           <Visualization frame={currentFrame} previousFrame={previousFrame} sourceLines={trace?.sourceLines} />
-          <TraceLog frames={trace?.frames || []} currentStep={playback.step} setStep={playback.setStep} />
+          <TraceLog
+            frames={rawFrames}
+            currentRawStep={currentFrame?.rawIndex ?? 0}
+            selectRawStep={selectRawStep}
+            isOpen={isRawLogOpen}
+            setIsOpen={setIsRawLogOpen}
+          />
         </section>
       </div>
 
