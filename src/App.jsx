@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { runTraceInBrowser } from "./pyodideRunner.js";
 
 const DEFAULT_CODE = `from typing import List
 
@@ -23,6 +24,8 @@ class Solution:
 
 const DEFAULT_TESTCASE = `piles = [3,6,7,11]
 h = 8`;
+
+const DEFAULT_EXPECTED_OUTPUT = "4";
 
 function PlayIcon() {
   return (
@@ -126,6 +129,236 @@ const VISUALIZATION_OPTIONS = [
   { value: VISUALIZATION_TYPES.dp, label: "DP table" }
 ];
 
+const PROBLEM_PRESETS = [
+  {
+    id: "koko",
+    title: "875. Koko Eating Bananas",
+    visualType: VISUALIZATION_TYPES.default,
+    code: DEFAULT_CODE,
+    testcase: DEFAULT_TESTCASE,
+    expectedOutput: DEFAULT_EXPECTED_OUTPUT
+  },
+  {
+    id: "two-sum-ii",
+    title: "167. Two Sum II",
+    visualType: VISUALIZATION_TYPES.pointers,
+    code: `class Solution:
+    def twoSum(self, numbers, target):
+        l, r = 0, len(numbers) - 1
+        while l < r:
+            total = numbers[l] + numbers[r]
+            if total == target:
+                return [l + 1, r + 1]
+            if total < target:
+                l += 1
+            else:
+                r -= 1
+        return []
+`,
+    testcase: `numbers = [2,7,11,15]
+target = 9`,
+    expectedOutput: "[1, 2]"
+  },
+  {
+    id: "valid-parentheses",
+    title: "20. Valid Parentheses",
+    visualType: VISUALIZATION_TYPES.default,
+    code: `class Solution:
+    def isValid(self, s: str) -> bool:
+        pairs = {")": "(", "}": "{", "]": "["}
+        stack = []
+        for char in s:
+            if char in pairs.values():
+                stack.append(char)
+            elif not stack or stack[-1] != pairs[char]:
+                return False
+            else:
+                stack.pop()
+        return not stack
+`,
+    testcase: `s = "({[]})"`,
+    expectedOutput: "true"
+  },
+  {
+    id: "merge-intervals",
+    title: "56. Merge Intervals",
+    visualType: VISUALIZATION_TYPES.default,
+    code: `class Solution:
+    def merge(self, intervals):
+        intervals.sort()
+        merged = []
+        for start, end in intervals:
+            if not merged or merged[-1][1] < start:
+                merged.append([start, end])
+            else:
+                merged[-1][1] = max(merged[-1][1], end)
+        return merged
+`,
+    testcase: `intervals = [[1,3],[2,6],[8,10],[15,18]]`,
+    expectedOutput: "[[1, 6], [8, 10], [15, 18]]"
+  },
+  {
+    id: "binary-search",
+    title: "704. Binary Search",
+    visualType: VISUALIZATION_TYPES.pointers,
+    code: `class Solution:
+    def search(self, nums, target):
+        l, r = 0, len(nums) - 1
+        while l <= r:
+            mid = (l + r) // 2
+            if nums[mid] == target:
+                return mid
+            if nums[mid] < target:
+                l = mid + 1
+            else:
+                r = mid - 1
+        return -1
+`,
+    testcase: `nums = [-1,0,3,5,9,12]
+target = 9`,
+    expectedOutput: "4"
+  },
+  {
+    id: "max-subarray",
+    title: "53. Maximum Subarray",
+    visualType: VISUALIZATION_TYPES.default,
+    code: `class Solution:
+    def maxSubArray(self, nums):
+        best = nums[0]
+        cur = 0
+        for num in nums:
+            cur = max(num, cur + num)
+            best = max(best, cur)
+        return best
+`,
+    testcase: `nums = [-2,1,-3,4,-1,2,1,-5,4]`,
+    expectedOutput: "6"
+  },
+  {
+    id: "climbing-stairs",
+    title: "70. Climbing Stairs",
+    visualType: VISUALIZATION_TYPES.dp,
+    code: `class Solution:
+    def climbStairs(self, n: int) -> int:
+        dp = [[0] for _ in range(n + 1)]
+        dp[0][0] = 1
+        dp[1][0] = 1
+        for i in range(2, n + 1):
+            dp[i][0] = dp[i - 1][0] + dp[i - 2][0]
+        return dp[n][0]
+`,
+    testcase: `n = 5`,
+    expectedOutput: "8"
+  },
+  {
+    id: "house-robber",
+    title: "198. House Robber",
+    visualType: VISUALIZATION_TYPES.dp,
+    code: `class Solution:
+    def rob(self, nums):
+        dp = [[0] for _ in range(len(nums) + 1)]
+        for i in range(1, len(nums) + 1):
+            dp[i][0] = max(dp[i - 1][0], dp[i - 2][0] + nums[i - 1])
+        return dp[len(nums)][0]
+`,
+    testcase: `nums = [2,7,9,3,1]`,
+    expectedOutput: "12"
+  },
+  {
+    id: "longest-substring",
+    title: "3. Longest Substring",
+    visualType: VISUALIZATION_TYPES.window,
+    code: `class Solution:
+    def lengthOfLongestSubstring(self, s: str) -> int:
+        seen = set()
+        left = 0
+        best = 0
+        for right, char in enumerate(s):
+            while char in seen:
+                seen.remove(s[left])
+                left += 1
+            seen.add(char)
+            best = max(best, right - left + 1)
+        return best
+`,
+    testcase: `s = "abcabcbb"`,
+    expectedOutput: "3"
+  },
+  {
+    id: "diameter-tree",
+    title: "543. Diameter of Binary Tree",
+    visualType: VISUALIZATION_TYPES.tree,
+    code: `class Solution:
+    def diameterOfBinaryTree(self, root: Optional[TreeNode]) -> int:
+        ans = 0
+
+        def dfs(node):
+            nonlocal ans
+            if not node:
+                return 0
+            left = dfs(node.left)
+            right = dfs(node.right)
+            ans = max(ans, left + right)
+            return 1 + max(left, right)
+
+        dfs(root)
+        return ans
+`,
+    testcase: `root = [1,null,2,3,4,5]`,
+    expectedOutput: "3"
+  },
+  {
+    id: "linked-list-cycle",
+    title: "141. Linked List Cycle",
+    visualType: VISUALIZATION_TYPES.pointers,
+    code: `class Solution:
+    def hasCycle(self, head: Optional[ListNode]) -> bool:
+        slow = head
+        fast = head
+        while fast and fast.next:
+            slow = slow.next
+            fast = fast.next.next
+            if slow is fast:
+                return True
+        return False
+`,
+    testcase: `head = [3,2,0,-4]
+pos = 1`,
+    expectedOutput: "true"
+  },
+  {
+    id: "number-islands",
+    title: "200. Number of Islands",
+    visualType: VISUALIZATION_TYPES.graph,
+    code: `class Solution:
+    def numIslands(self, grid) -> int:
+        rows, cols = len(grid), len(grid[0])
+        seen = set()
+        islands = 0
+
+        def dfs(r, c):
+            if r < 0 or c < 0 or r == rows or c == cols:
+                return
+            if grid[r][c] == "0" or (r, c) in seen:
+                return
+            seen.add((r, c))
+            dfs(r + 1, c)
+            dfs(r - 1, c)
+            dfs(r, c + 1)
+            dfs(r, c - 1)
+
+        for r in range(rows):
+            for c in range(cols):
+                if grid[r][c] == "1" and (r, c) not in seen:
+                    islands += 1
+                    dfs(r, c)
+        return islands
+`,
+    testcase: `grid = [["1","1","0"],["0","1","0"],["1","0","1"]]`,
+    expectedOutput: "3"
+  }
+];
+
 const PYTHON_KEYWORDS = new Set([
   "and",
   "as",
@@ -209,6 +442,10 @@ function highlightPythonLine(line) {
 
 function highlightPython(code) {
   return code.split("\n").map(highlightPythonLine).join("\n");
+}
+
+function editableTarget(target) {
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName) || target?.isContentEditable;
 }
 
 function annotateTraceFrame(frame, index, frames) {
@@ -1136,9 +1373,10 @@ function ResultBar({ trace, error, errorLine, expectedOutput }) {
 }
 
 function App() {
+  const [selectedPreset, setSelectedPreset] = useState(PROBLEM_PRESETS[0].id);
   const [code, setCode] = useState(DEFAULT_CODE);
   const [testcase, setTestcase] = useState(DEFAULT_TESTCASE);
-  const [expectedOutput, setExpectedOutput] = useState("4");
+  const [expectedOutput, setExpectedOutput] = useState(DEFAULT_EXPECTED_OUTPUT);
   const [trace, setTrace] = useState(null);
   const [error, setError] = useState("");
   const [errorLine, setErrorLine] = useState(null);
@@ -1147,33 +1385,51 @@ function App() {
   const [traceMode, setTraceMode] = useState(TRACE_MODES.updates);
   const [visualType, setVisualType] = useState(VISUALIZATION_TYPES.default);
   const [visualRoles, setVisualRoles] = useState({});
+  const [theme, setTheme] = useState(() => window.localStorage.getItem("leetcode-visualizer-theme") || "dark");
   const rawFrames = trace?.frames || [];
   const visibleFrames = useMemo(() => buildTraceFrames(rawFrames, traceMode), [rawFrames, traceMode]);
   const playback = useTracePlayback(visibleFrames);
   const currentFrame = visibleFrames[playback.step];
   const previousFrame = visibleFrames[playback.step - 1];
-  const abortRef = useRef(null);
+  const runIdRef = useRef(0);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("leetcode-visualizer-theme", theme);
+  }, [theme]);
 
   function selectRawStep(rawIndex) {
     const visibleIndex = visibleFrames.findIndex((frame) => frame.rawIndex >= rawIndex);
     playback.setStep(visibleIndex >= 0 ? visibleIndex : visibleFrames.length - 1);
   }
 
+  function applyPreset(presetId) {
+    const preset = PROBLEM_PRESETS.find((item) => item.id === presetId);
+    if (!preset) return;
+    setSelectedPreset(preset.id);
+    setCode(preset.code);
+    setTestcase(preset.testcase);
+    setExpectedOutput(preset.expectedOutput);
+    setTrace(null);
+    setError("");
+    setErrorLine(null);
+    setIsRawLogOpen(false);
+    setTraceMode(TRACE_MODES.updates);
+    setVisualType(preset.visualType || VISUALIZATION_TYPES.default);
+    setVisualRoles({});
+  }
+
   async function runTrace() {
+    if (isRunning) return;
+    const runId = runIdRef.current + 1;
+    runIdRef.current = runId;
     setIsRunning(true);
     setError("");
     setErrorLine(null);
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
 
     try {
-      const response = await fetch("/api/trace", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, testcase }),
-        signal: abortRef.current.signal
-      });
-      const payload = await response.json();
+      const payload = await runTraceInBrowser({ code, testcase });
+      if (runId !== runIdRef.current) return;
       if (!payload.ok) {
         setTrace(null);
         setError(payload.error || "Trace failed.");
@@ -1183,15 +1439,38 @@ function App() {
       setTrace(payload);
       setIsRawLogOpen(false);
     } catch (requestError) {
-      if (requestError.name !== "AbortError") {
-        setTrace(null);
-        setError(requestError.message);
-        setErrorLine(null);
-      }
+      setTrace(null);
+      setError(requestError.message);
+      setErrorLine(null);
     } finally {
-      setIsRunning(false);
+      if (runId === runIdRef.current) {
+        setIsRunning(false);
+      }
     }
   }
+
+  useEffect(() => {
+    function handleKeyDown(event) {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        runTrace();
+        return;
+      }
+
+      if (editableTarget(event.target)) return;
+
+      if (event.key === "ArrowRight") {
+        event.preventDefault();
+        playback.setStep(playback.step + 1);
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        playback.setStep(playback.step - 1);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [playback, runTrace]);
 
   return (
     <main className="app-shell">
@@ -1200,6 +1479,16 @@ function App() {
           <span className="brand-mark">C</span>
           <strong>LeetCode Solution Visualizer</strong>
         </div>
+        <label className="preset-select">
+          <span>Preset:</span>
+          <select value={selectedPreset} onChange={(event) => applyPreset(event.target.value)}>
+            {PROBLEM_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.title}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="language-select">
           <span>Language:</span>
           <select defaultValue="python">
@@ -1208,7 +1497,10 @@ function App() {
         </label>
         <button className="primary-button" type="button" onClick={runTrace} disabled={isRunning}>
           <RunIcon />
-          {isRunning ? "Tracing..." : "Run Trace"}
+          {isRunning ? "Loading / tracing..." : "Run Trace"}
+        </button>
+        <button className="secondary-button theme-toggle" type="button" onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}>
+          {theme === "dark" ? "Light" : "Dark"}
         </button>
         <button className="secondary-button" type="button" onClick={() => { setTrace(null); setError(""); setErrorLine(null); }}>
           <ResetIcon />

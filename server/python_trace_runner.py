@@ -558,5 +558,5 @@ def main():
         print(json.dumps(error_payload))
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and not globals().get("__PYODIDE_RUNNER__"):
     main()

@@ -1,51 +1,69 @@
 # LeetCode Solution Visualizer
 
-LeetCode Solution Visualizer helps programmers understand how their Python solutions change state while they run. Instead of reading a long raw trace or mentally simulating every line, users can replay the execution and inspect the variables, arrays, maps, sets, and return values at each meaningful snapshot.
+LeetCode Solution Visualizer is a browser-based tool for understanding how Python solutions change state while they run. It is built for learners who want to inspect variables and data structures directly instead of reading a long raw execution log or relying on generated explanations.
 
-The goal is to make debugging and learning easier for LeetCode-style problems. The app focuses on what changed in memory, so users can see how their data structures evolve across loops, conditions, stack operations, pointer movement, and final returns.
+![LeetCode Solution Visualizer screenshot](assets/screenshot.png)
+
+## Why This Exists
+
+LeetCode solutions often look short, but the hard part is mentally simulating what happens across loops, conditionals, recursive calls, stacks, pointers, and mutable data structures. This app turns that execution into a step-by-step visual trace so users can see what changed, when it changed, and which line caused it.
 
 ## What It Does
 
-- Runs a Python `Solution` method or top-level function against a LeetCode-style testcase.
-- Captures execution snapshots from a deterministic Python trace runner.
-- Visualizes arrays, linked lists, trees, maps, sets, scalars, and return values.
-- Provides multiple trace modes:
-  - `Updates`: focuses on snapshots where variables or data structures changed.
-  - `Flow`: includes updates plus branch, loop, and return context.
-  - `Raw`: shows the full executed-line trace.
-- Lets users replay, step through, scrub, and inspect the solution state without relying on LLM-generated explanations.
+- Runs Python `Solution` methods or top-level functions against LeetCode-style testcase input.
+- Executes the deterministic trace runner in the browser with Pyodide, so no backend server is required.
+- Captures meaningful snapshots and shows arrays, linked lists, trees, maps, sets, scalars, return values, and changed variables.
+- Provides `Updates`, `Flow`, and `Raw` trace modes so users can reduce noise or inspect every executed line.
+- Includes guided visual modes for pointers, sliding windows, trees, graphs, and DP tables when the user selects the matching problem type.
+- Offers problem presets, syntax highlighting, error-line highlighting, keyboard shortcuts, and dark/light themes.
 
-## Development
+## GitHub Pages Deployment
+
+This app is ready for static hosting. The browser downloads Pyodide, loads `python_trace_runner.py` as bundled source, and runs the trace locally in WebAssembly.
+
+```powershell
+npm install
+npm run build
+```
+
+The static site is generated in `dist/`. A GitHub Actions workflow is included at `.github/workflows/pages.yml`; enable GitHub Pages with **Source: GitHub Actions** and pushes to `main` or `master` will publish the app.
+
+## Local Development
 
 ```powershell
 npm install
 npm run dev
 ```
 
-`npm run dev` builds the React frontend and starts the trace API. Use `npm run build` after frontend edits, then `npm run start` to serve the existing build.
+Open the Vite URL printed in the terminal. The first trace run may take longer because Pyodide is downloaded and initialized in the browser.
+
+## Shortcuts
+
+- `Ctrl+Enter` or `Cmd+Enter`: run trace
+- `ArrowRight`: next visible snapshot
+- `ArrowLeft`: previous visible snapshot
 
 ## Supported Inputs
 
-- Python `class Solution` methods and top-level functions.
-- Standard LeetCode-style inputs as either named lines:
+Use named LeetCode-style values:
 
 ```text
 piles = [3,6,7,11]
 h = 8
 ```
 
-- Or raw positional lines:
+Or raw positional values:
 
 ```text
 [3,6,7,11]
 8
 ```
 
-- Basic LeetCode harness conversion for `ListNode`, `TreeNode`, and linked-list cycle `pos`.
-- A deterministic trace engine without LLM-based explanation or algorithm detection.
+The runner includes basic LeetCode harness conversion for `ListNode`, `TreeNode`, and linked-list cycle `pos`.
 
-## Not Yet Covered
+## Current Limits
 
-- Design-problem operation arrays such as `["MinStack","push","getMin"]`.
-- Interactive helper APIs such as `guess`, `isBadVersion`, `Robot`, or `Master`.
-- Automatic LeetCode problem fetching.
+- Python execution depends on Pyodide loading from the CDN.
+- Design-problem operation arrays such as `["MinStack","push","getMin"]` are not handled yet.
+- Interactive helper APIs such as `guess`, `isBadVersion`, `Robot`, or `Master` are not implemented.
+- Automatic LeetCode problem fetching is not included.
