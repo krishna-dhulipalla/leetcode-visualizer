@@ -108,8 +108,107 @@ const TRACE_MODE_OPTIONS = [
   { value: TRACE_MODES.raw, label: "Raw" }
 ];
 
+const VISUALIZATION_TYPES = {
+  default: "default",
+  pointers: "pointers",
+  window: "window",
+  tree: "tree",
+  graph: "graph",
+  dp: "dp"
+};
+
+const VISUALIZATION_OPTIONS = [
+  { value: VISUALIZATION_TYPES.default, label: "Default" },
+  { value: VISUALIZATION_TYPES.pointers, label: "Two pointers" },
+  { value: VISUALIZATION_TYPES.window, label: "Sliding window" },
+  { value: VISUALIZATION_TYPES.tree, label: "Tree" },
+  { value: VISUALIZATION_TYPES.graph, label: "Graph" },
+  { value: VISUALIZATION_TYPES.dp, label: "DP table" }
+];
+
+const PYTHON_KEYWORDS = new Set([
+  "and",
+  "as",
+  "assert",
+  "break",
+  "class",
+  "continue",
+  "def",
+  "del",
+  "elif",
+  "else",
+  "except",
+  "False",
+  "finally",
+  "for",
+  "from",
+  "global",
+  "if",
+  "import",
+  "in",
+  "is",
+  "lambda",
+  "None",
+  "nonlocal",
+  "not",
+  "or",
+  "pass",
+  "raise",
+  "return",
+  "True",
+  "try",
+  "while",
+  "with",
+  "yield"
+]);
+
+const PYTHON_TOKEN_PATTERN =
+  /("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|#.*|\b[A-Za-z_][A-Za-z0-9_]*\b|\b\d+(?:\.\d+)?\b)/g;
+
 function isFlowLine(lineText = "") {
   return /^(if|elif|else|for|while|return|break|continue)\b/.test(lineText.trim());
+}
+
+function escapeHtml(text) {
+  return text
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function highlightPythonLine(line) {
+  PYTHON_TOKEN_PATTERN.lastIndex = 0;
+  let output = "";
+  let cursor = 0;
+  let match = PYTHON_TOKEN_PATTERN.exec(line);
+
+  while (match) {
+    const token = match[0];
+    output += escapeHtml(line.slice(cursor, match.index));
+
+    let className = "";
+    if (token.startsWith("#")) {
+      className = "syntax-comment";
+    } else if (token.startsWith("\"") || token.startsWith("'")) {
+      className = "syntax-string";
+    } else if (/^\d/.test(token)) {
+      className = "syntax-number";
+    } else if (PYTHON_KEYWORDS.has(token)) {
+      className = "syntax-keyword";
+    }
+
+    output += className ? `<span class="${className}">${escapeHtml(token)}</span>` : escapeHtml(token);
+    cursor = match.index + token.length;
+    match = PYTHON_TOKEN_PATTERN.exec(line);
+  }
+
+  output += escapeHtml(line.slice(cursor));
+  return output || " ";
+}
+
+function highlightPython(code) {
+  return code.split("\n").map(highlightPythonLine).join("\n");
 }
 
 function annotateTraceFrame(frame, index, frames) {
@@ -214,13 +313,123 @@ function changedNames(current, previous) {
   return changed;
 }
 
-function CodeEditor({ code, setCode, currentLine }) {
+function localVariables(locals = {}) {
+  return Object.entries(locals).map(([name, value]) => ({ name, value }));
+}
+
+function scalarInteger(variable) {
+  const value = variable?.value;
+  return value?.type === "scalar" && Number.isInteger(value.value) ? value.value : null;
+}
+
+function sequenceItems(variable) {
+  const value = variable?.value;
+  if (!value) return [];
+  if (["array", "tuple", "linked-list"].includes(value.type)) return value.value || [];
+  if (value.type === "scalar" && typeof value.value === "string") {
+    return [...value.value].map((character) => ({ type: "scalar", value: character, label: JSON.stringify(character) }));
+  }
+  return [];
+}
+
+function isSequenceVariable(variable) {
+  return sequenceItems(variable).length > 0 || ["array", "tuple", "linked-list"].includes(variable?.value?.type);
+}
+
+function isTreeVariable(variable) {
+  return variable?.value?.type === "tree";
+}
+
+function matrixRows(variable) {
+  const rows = variable?.value?.value;
+  if (!Array.isArray(rows)) return [];
+  if (!rows.every((row) => ["array", "tuple"].includes(row?.type) && Array.isArray(row.value))) return [];
+  return rows.map((row) => row.value);
+}
+
+function isTableVariable(variable) {
+  return matrixRows(variable).length > 0;
+}
+
+function isGraphVariable(variable) {
+  return variable?.value?.type === "map" || isTableVariable(variable);
+}
+
+function variableByName(locals, name) {
+  if (!name) return null;
+  const value = locals?.[name];
+  return value ? { name, value } : null;
+}
+
+function buildVisualizationChoices(locals = {}) {
+  const variables = localVariables(locals);
+  const scalars = variables.filter((variable) => scalarInteger(variable) !== null);
+
+  return {
+    sequences: variables.filter(isSequenceVariable),
+    scalars,
+    trees: variables.filter(isTreeVariable),
+    graphs: variables.filter(isGraphVariable),
+    tables: variables.filter(isTableVariable)
+  };
+}
+
+function selectRole(options, selectedName, preferredNames = [], allowEmpty = false) {
+  if (allowEmpty && selectedName === "") return "";
+  if (selectedName && options.some((option) => option.name === selectedName)) return selectedName;
+  const preferred = preferredNames.find((name) => options.some((option) => option.name === name));
+  return preferred || options[0]?.name || "";
+}
+
+function resolveVisualizationRoles(type, roles, choices) {
+  if (type === VISUALIZATION_TYPES.pointers) {
+    return {
+      sequence: selectRole(choices.sequences, roles.sequence, ["nums", "arr", "piles", "s"]),
+      pointerA: selectRole(choices.scalars, roles.pointerA, ["left", "l", "slow", "start", "i"]),
+      pointerB: selectRole(choices.scalars, roles.pointerB, ["right", "r", "fast", "end", "j", "mid"], true)
+    };
+  }
+  if (type === VISUALIZATION_TYPES.window) {
+    return {
+      sequence: selectRole(choices.sequences, roles.sequence, ["s", "nums", "arr"]),
+      start: selectRole(choices.scalars, roles.start, ["left", "l", "start", "i"]),
+      end: selectRole(choices.scalars, roles.end, ["right", "r", "end", "j"])
+    };
+  }
+  if (type === VISUALIZATION_TYPES.tree) {
+    return {
+      tree: selectRole(choices.trees, roles.tree, ["root", "tree"])
+    };
+  }
+  if (type === VISUALIZATION_TYPES.graph) {
+    return {
+      graph: selectRole(choices.graphs, roles.graph, ["graph", "adj", "adjacency"]),
+      active: selectRole(choices.scalars, roles.active, ["node", "cur", "current", "u", "v"], true)
+    };
+  }
+  if (type === VISUALIZATION_TYPES.dp) {
+    return {
+      table: selectRole(choices.tables, roles.table, ["dp", "memo", "table"]),
+      row: selectRole(choices.scalars, roles.row, ["i", "row", "r"], true),
+      col: selectRole(choices.scalars, roles.col, ["j", "col", "c"], true)
+    };
+  }
+  return {};
+}
+
+function CodeEditor({ code, setCode, currentLine, errorLine }) {
   const gutterRef = useRef(null);
+  const syntaxRef = useRef(null);
+  const highlightedCode = useMemo(() => highlightPython(code), [code]);
   const lineCount = Math.max(code.split("\n").length, 18);
   const lines = Array.from({ length: lineCount }, (_, index) => index + 1);
   const syncGutterScroll = (event) => {
     if (gutterRef.current) {
       gutterRef.current.scrollTop = event.currentTarget.scrollTop;
+    }
+    if (syntaxRef.current) {
+      syntaxRef.current.scrollTop = event.currentTarget.scrollTop;
+      syntaxRef.current.scrollLeft = event.currentTarget.scrollLeft;
     }
   };
 
@@ -233,19 +442,25 @@ function CodeEditor({ code, setCode, currentLine }) {
       <div className="editor-shell">
         <div className="line-gutter" ref={gutterRef} aria-hidden="true">
           {lines.map((line) => (
-            <div key={line} className={line === currentLine ? "active-line" : ""}>
+            <div
+              key={line}
+              className={`${line === currentLine ? "active-line" : ""} ${line === errorLine ? "error-line" : ""}`}
+            >
               {line}
             </div>
           ))}
         </div>
-        <textarea
-          spellCheck="false"
-          wrap="off"
-          value={code}
-          onChange={(event) => setCode(event.target.value)}
-          onScroll={syncGutterScroll}
-          aria-label="Python solution code"
-        />
+        <div className="code-input-wrap">
+          <pre className="syntax-layer" ref={syntaxRef} aria-hidden="true" dangerouslySetInnerHTML={{ __html: highlightedCode }} />
+          <textarea
+            spellCheck="false"
+            wrap="off"
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            onScroll={syncGutterScroll}
+            aria-label="Python solution code"
+          />
+        </div>
       </div>
     </section>
   );
@@ -340,9 +555,276 @@ function MapPanel({ variables, changed }) {
   );
 }
 
-function Visualization({ frame, previousFrame, sourceLines }) {
+function RoleSelect({ label, value, options, onChange, optional = false }) {
+  return (
+    <label className="role-select">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {optional ? <option value="">None</option> : null}
+        {!options.length && !optional ? <option value="">No compatible variable</option> : null}
+        {options.map((option) => (
+          <option key={option.name} value={option.name}>
+            {option.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function VisualizationControls({ type, setType, roles, setRole, choices, resolvedRoles }) {
+  return (
+    <div className="visual-controls">
+      <label className="role-select visual-type-select">
+        <span>Visual</span>
+        <select value={type} onChange={(event) => setType(event.target.value)}>
+          {VISUALIZATION_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {type === VISUALIZATION_TYPES.pointers ? (
+        <>
+          <RoleSelect label="Sequence" value={resolvedRoles.sequence} options={choices.sequences} onChange={(value) => setRole("sequence", value)} />
+          <RoleSelect label="Pointer A" value={resolvedRoles.pointerA} options={choices.scalars} onChange={(value) => setRole("pointerA", value)} />
+          <RoleSelect label="Pointer B" value={resolvedRoles.pointerB} options={choices.scalars} onChange={(value) => setRole("pointerB", value)} optional />
+        </>
+      ) : null}
+
+      {type === VISUALIZATION_TYPES.window ? (
+        <>
+          <RoleSelect label="Sequence" value={resolvedRoles.sequence} options={choices.sequences} onChange={(value) => setRole("sequence", value)} />
+          <RoleSelect label="Start" value={resolvedRoles.start} options={choices.scalars} onChange={(value) => setRole("start", value)} />
+          <RoleSelect label="End" value={resolvedRoles.end} options={choices.scalars} onChange={(value) => setRole("end", value)} />
+        </>
+      ) : null}
+
+      {type === VISUALIZATION_TYPES.tree ? (
+        <RoleSelect label="Tree" value={resolvedRoles.tree} options={choices.trees} onChange={(value) => setRole("tree", value)} />
+      ) : null}
+
+      {type === VISUALIZATION_TYPES.graph ? (
+        <>
+          <RoleSelect label="Graph" value={resolvedRoles.graph} options={choices.graphs} onChange={(value) => setRole("graph", value)} />
+          <RoleSelect label="Active" value={resolvedRoles.active} options={choices.scalars} onChange={(value) => setRole("active", value)} optional />
+        </>
+      ) : null}
+
+      {type === VISUALIZATION_TYPES.dp ? (
+        <>
+          <RoleSelect label="Table" value={resolvedRoles.table} options={choices.tables} onChange={(value) => setRole("table", value)} />
+          <RoleSelect label="Row" value={resolvedRoles.row} options={choices.scalars} onChange={(value) => setRole("row", value)} optional />
+          <RoleSelect label="Col" value={resolvedRoles.col} options={choices.scalars} onChange={(value) => setRole("col", value)} optional />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function GuidanceMessage({ children }) {
+  return <div className="guidance-message">{children}</div>;
+}
+
+function SequenceCells({ variable, markers = [], range = null }) {
+  const items = sequenceItems(variable);
+
+  if (!variable || !items.length) {
+    return <GuidanceMessage>Choose an array, list, linked list, or string sequence.</GuidanceMessage>;
+  }
+
+  return (
+    <div className="guided-cells">
+      {items.map((item, index) => {
+        const cellMarkers = markers.filter((marker) => marker.index === index);
+        const inRange = range && index >= range.start && index <= range.end;
+        return (
+          <div className={`guided-cell-wrap ${inRange ? "in-window" : ""}`} key={`${variable.name}-${index}`}>
+            <div className="pointer-tags">
+              {cellMarkers.map((marker) => (
+                <span key={marker.label}>{marker.label}</span>
+              ))}
+            </div>
+            <div className={`guided-cell ${cellMarkers.length ? "pointed" : ""}`}>{valueLabel(item)}</div>
+            <div className="array-index">[{index}]</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PointerVisualization({ locals, roles }) {
+  const sequence = variableByName(locals, roles.sequence);
+  const pointerA = variableByName(locals, roles.pointerA);
+  const pointerB = variableByName(locals, roles.pointerB);
+  const itemCount = sequenceItems(sequence).length;
+  const markers = [
+    pointerA ? { label: roles.pointerA, index: scalarInteger(pointerA) } : null,
+    pointerB ? { label: roles.pointerB, index: scalarInteger(pointerB) } : null
+  ].filter((marker) => marker && marker.index !== null);
+  const outOfRange = markers.filter((marker) => marker.index < 0 || marker.index >= itemCount);
+
+  return (
+    <div className="guided-render">
+      {outOfRange.length ? (
+        <GuidanceMessage>
+          {outOfRange.map((marker) => `${marker.label}=${marker.index}`).join(", ")} outside {roles.sequence}; no arrow drawn for those values.
+        </GuidanceMessage>
+      ) : null}
+      <SequenceCells variable={sequence} markers={markers} />
+    </div>
+  );
+}
+
+function WindowVisualization({ locals, roles }) {
+  const sequence = variableByName(locals, roles.sequence);
+  const startVariable = variableByName(locals, roles.start);
+  const endVariable = variableByName(locals, roles.end);
+  const start = scalarInteger(startVariable);
+  const end = scalarInteger(endVariable);
+  const itemCount = sequenceItems(sequence).length;
+  const validRange = start !== null && end !== null && start <= end && start >= 0 && end < itemCount ? { start, end } : null;
+  const markers = [
+    start !== null ? { label: roles.start, index: start } : null,
+    end !== null ? { label: roles.end, index: end } : null
+  ].filter(Boolean);
+
+  return (
+    <div className="guided-render">
+      {!validRange ? <GuidanceMessage>Select integer start and end variables to highlight the active window.</GuidanceMessage> : null}
+      <SequenceCells variable={sequence} markers={markers} range={validRange} />
+    </div>
+  );
+}
+
+function isNullSerialized(value) {
+  return value?.type === "none" || value?.label === "null" || value?.value === null;
+}
+
+function TreeVisualization({ locals, roles }) {
+  const tree = variableByName(locals, roles.tree);
+  const nodes = tree?.value?.value || [];
+  const visibleNodes = nodes.map((node, index) => ({ node, index })).filter(({ node }) => !isNullSerialized(node));
+
+  if (!tree || !visibleNodes.length) {
+    return <GuidanceMessage>Choose a TreeNode variable from the trace.</GuidanceMessage>;
+  }
+
+  const width = 760;
+  const levelCount = Math.floor(Math.log2(nodes.length || 1)) + 1;
+  const height = Math.max(110, levelCount * 74);
+  const positions = new Map();
+
+  visibleNodes.forEach(({ index }) => {
+    const level = Math.floor(Math.log2(index + 1));
+    const levelStart = 2 ** level - 1;
+    const offset = index - levelStart;
+    const slots = 2 ** level + 1;
+    positions.set(index, {
+      x: Math.round(((offset + 1) / slots) * width),
+      y: 32 + level * 70
+    });
+  });
+
+  const edges = visibleNodes.flatMap(({ index }) => {
+    const children = [2 * index + 1, 2 * index + 2];
+    return children
+      .filter((childIndex) => positions.has(childIndex))
+      .map((childIndex) => ({ from: positions.get(index), to: positions.get(childIndex), key: `${index}-${childIndex}` }));
+  });
+
+  return (
+    <div className="guided-render tree-render">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${tree.name} tree visualization`}>
+        {edges.map((edge) => (
+          <line key={edge.key} x1={edge.from.x} y1={edge.from.y} x2={edge.to.x} y2={edge.to.y} />
+        ))}
+        {visibleNodes.map(({ node, index }) => {
+          const position = positions.get(index);
+          return (
+            <g key={index} transform={`translate(${position.x} ${position.y})`}>
+              <circle r="18" />
+              <text textAnchor="middle" dominantBaseline="central">{valueLabel(node)}</text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function GraphVisualization({ locals, roles }) {
+  const graph = variableByName(locals, roles.graph);
+  const active = scalarInteger(variableByName(locals, roles.active));
+
+  if (!graph) {
+    return <GuidanceMessage>Choose an adjacency map or adjacency-list variable.</GuidanceMessage>;
+  }
+
+  const rows =
+    graph.value.type === "map"
+      ? graph.value.value.map((entry) => ({ key: valueLabel(entry.key), value: valueLabel(entry.value) }))
+      : matrixRows(graph).map((row, index) => ({ key: String(index), value: `[${row.map(valueLabel).join(", ")}]` }));
+
+  return (
+    <div className="guided-render graph-render">
+      {rows.map((row) => (
+        <div className={`graph-row ${active !== null && String(active) === row.key ? "active" : ""}`} key={row.key}>
+          <span>{row.key}</span>
+          <strong>{row.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DpVisualization({ locals, roles }) {
+  const table = variableByName(locals, roles.table);
+  const rows = matrixRows(table);
+  const activeRow = scalarInteger(variableByName(locals, roles.row));
+  const activeCol = scalarInteger(variableByName(locals, roles.col));
+
+  if (!table || !rows.length) {
+    return <GuidanceMessage>Choose a 2D array variable such as dp, memo, or table.</GuidanceMessage>;
+  }
+
+  return (
+    <div className="guided-render dp-render">
+      {rows.map((row, rowIndex) => (
+        <div className="dp-row" key={rowIndex}>
+          {row.map((cell, colIndex) => (
+            <div
+              className={`dp-cell ${rowIndex === activeRow ? "active-row" : ""} ${colIndex === activeCol ? "active-col" : ""} ${
+                rowIndex === activeRow && colIndex === activeCol ? "active-cell" : ""
+              }`}
+              key={`${rowIndex}-${colIndex}`}
+            >
+              {valueLabel(cell)}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GuidedVisualization({ type, locals, roles }) {
+  if (type === VISUALIZATION_TYPES.pointers) return <PointerVisualization locals={locals} roles={roles} />;
+  if (type === VISUALIZATION_TYPES.window) return <WindowVisualization locals={locals} roles={roles} />;
+  if (type === VISUALIZATION_TYPES.tree) return <TreeVisualization locals={locals} roles={roles} />;
+  if (type === VISUALIZATION_TYPES.graph) return <GraphVisualization locals={locals} roles={roles} />;
+  if (type === VISUALIZATION_TYPES.dp) return <DpVisualization locals={locals} roles={roles} />;
+  return null;
+}
+
+function Visualization({ frame, previousFrame, sourceLines, visualType, setVisualType, visualRoles, setVisualRoles }) {
   const groups = useMemo(() => categorizeVariables(frame?.locals), [frame]);
   const changed = useMemo(() => changedNames(frame?.locals, previousFrame?.locals), [frame, previousFrame]);
+  const choices = useMemo(() => buildVisualizationChoices(frame?.locals), [frame]);
+  const resolvedRoles = useMemo(() => resolveVisualizationRoles(visualType, visualRoles, choices), [choices, visualRoles, visualType]);
   const lineText = frame?.displayLineText || frame?.lineText || "";
   const lineNumber = frame?.displayLine ?? frame?.line;
   const stateLabel =
@@ -353,14 +835,29 @@ function Visualization({ frame, previousFrame, sourceLines }) {
         : frame?.event === "return"
           ? "Returned at line"
           : "Executing line";
+  const setRole = (name, value) => setVisualRoles((current) => ({ ...current, [name]: value }));
 
   return (
-    <div className="visual-grid">
+    <div className={`visual-grid ${visualType !== VISUALIZATION_TYPES.default ? "with-guidance" : ""}`}>
       <div className="execution-strip">
         <span>{stateLabel} {lineNumber ?? "-"}</span>
         <code>{lineText.trim() || sourceLines?.[lineNumber - 1] || "Waiting for trace"}</code>
         <em>{frame?.changed?.length ? `Changed ${frame.changed.join(", ")}` : "Current State"}</em>
       </div>
+
+      <section className="guided-panel">
+        <VisualizationControls
+          type={visualType}
+          setType={setVisualType}
+          roles={visualRoles}
+          setRole={setRole}
+          choices={choices}
+          resolvedRoles={resolvedRoles}
+        />
+        {visualType !== VISUALIZATION_TYPES.default ? (
+          <GuidedVisualization type={visualType} locals={frame?.locals || {}} roles={resolvedRoles} />
+        ) : null}
+      </section>
 
       <section className="panel data-panel arrays-panel">
         <div className="panel-header">
@@ -489,9 +986,9 @@ function TraceLog({ frames, currentRawStep, selectRawStep, isOpen, setIsOpen }) 
   );
 }
 
-function ResultBar({ trace, error, expectedOutput }) {
+function ResultBar({ trace, error, errorLine, expectedOutput }) {
   if (error) {
-    return <div className="status-bar error">Trace failed: {error}</div>;
+    return <div className="status-bar error">Trace failed{errorLine ? ` on line ${errorLine}` : ""}: {error}</div>;
   }
 
   if (!trace?.ok) {
@@ -517,9 +1014,12 @@ function App() {
   const [expectedOutput, setExpectedOutput] = useState("4");
   const [trace, setTrace] = useState(null);
   const [error, setError] = useState("");
+  const [errorLine, setErrorLine] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [isRawLogOpen, setIsRawLogOpen] = useState(false);
   const [traceMode, setTraceMode] = useState(TRACE_MODES.updates);
+  const [visualType, setVisualType] = useState(VISUALIZATION_TYPES.default);
+  const [visualRoles, setVisualRoles] = useState({});
   const rawFrames = trace?.frames || [];
   const visibleFrames = useMemo(() => buildTraceFrames(rawFrames, traceMode), [rawFrames, traceMode]);
   const playback = useTracePlayback(visibleFrames);
@@ -535,6 +1035,7 @@ function App() {
   async function runTrace() {
     setIsRunning(true);
     setError("");
+    setErrorLine(null);
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 
@@ -549,6 +1050,7 @@ function App() {
       if (!payload.ok) {
         setTrace(null);
         setError(payload.error || "Trace failed.");
+        setErrorLine(payload.errorLine ?? null);
         return;
       }
       setTrace(payload);
@@ -557,6 +1059,7 @@ function App() {
       if (requestError.name !== "AbortError") {
         setTrace(null);
         setError(requestError.message);
+        setErrorLine(null);
       }
     } finally {
       setIsRunning(false);
@@ -580,7 +1083,7 @@ function App() {
           <RunIcon />
           {isRunning ? "Tracing..." : "Run Trace"}
         </button>
-        <button className="secondary-button" type="button" onClick={() => setTrace(null)}>
+        <button className="secondary-button" type="button" onClick={() => { setTrace(null); setError(""); setErrorLine(null); }}>
           <ResetIcon />
           Reset
         </button>
@@ -588,7 +1091,7 @@ function App() {
 
       <div className="workspace">
         <div className="left-column">
-          <CodeEditor code={code} setCode={setCode} currentLine={currentFrame?.displayLine ?? currentFrame?.line} />
+          <CodeEditor code={code} setCode={setCode} currentLine={currentFrame?.displayLine ?? currentFrame?.line} errorLine={errorLine} />
           <TextInputPanel
             title="Testcase Input"
             value={testcase}
@@ -613,7 +1116,15 @@ function App() {
             </button>
           </div>
           <Playback frames={visibleFrames} rawCount={rawFrames.length} playback={playback} traceMode={traceMode} setTraceMode={setTraceMode} />
-          <Visualization frame={currentFrame} previousFrame={previousFrame} sourceLines={trace?.sourceLines} />
+          <Visualization
+            frame={currentFrame}
+            previousFrame={previousFrame}
+            sourceLines={trace?.sourceLines}
+            visualType={visualType}
+            setVisualType={setVisualType}
+            visualRoles={visualRoles}
+            setVisualRoles={setVisualRoles}
+          />
           <TraceLog
             frames={rawFrames}
             currentRawStep={currentFrame?.rawIndex ?? 0}
@@ -624,7 +1135,7 @@ function App() {
         </section>
       </div>
 
-      <ResultBar trace={trace} error={error} expectedOutput={expectedOutput} />
+      <ResultBar trace={trace} error={error} errorLine={errorLine} expectedOutput={expectedOutput} />
     </main>
   );
 }

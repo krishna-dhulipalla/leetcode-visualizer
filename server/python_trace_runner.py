@@ -505,20 +505,32 @@ def run_trace(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def extract_error_location(exc: Exception) -> tuple[Optional[int], str]:
+    if isinstance(exc, SyntaxError):
+        return exc.lineno, (exc.text or "").strip()
+
+    for frame in reversed(traceback.extract_tb(exc.__traceback__)):
+        if frame.filename == USER_FILENAME:
+            return frame.lineno, frame.line or ""
+
+    return None, ""
+
+
 def main():
     payload = json.loads(sys.stdin.read() or "{}")
     try:
         print(json.dumps(run_trace(payload)))
     except Exception as exc:
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "error": str(exc),
-                    "traceback": traceback.format_exc(limit=8),
-                }
-            )
-        )
+        error_line, error_line_text = extract_error_location(exc)
+        error_payload = {
+            "ok": False,
+            "error": str(exc),
+            "traceback": traceback.format_exc(limit=8),
+        }
+        if error_line is not None:
+            error_payload["errorLine"] = error_line
+            error_payload["errorLineText"] = error_line_text
+        print(json.dumps(error_payload))
 
 
 if __name__ == "__main__":
