@@ -223,7 +223,7 @@ svg {
 
 .left-column {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 132px 72px;
+  grid-template-rows: minmax(0, 1fr) 132px 72px auto;
   gap: 0;
   height: 100%;
   min-height: 0;
@@ -233,7 +233,7 @@ svg {
 
 .right-column {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -686,7 +686,7 @@ svg {
 }
 
 .guided-render {
-  max-height: 170px;
+  max-height: 260px;
   overflow: auto;
   padding: 8px 10px 10px;
   border-top: 1px solid var(--line-soft);
@@ -749,11 +749,15 @@ svg {
   font-style: italic;
 }
 
+.tree-render {
+  max-height: 320px;
+}
+
 .tree-render svg {
   display: block;
   width: 100%;
   min-width: 420px;
-  height: 160px;
+  height: auto;
 }
 
 .tree-render line {
@@ -765,11 +769,23 @@ svg {
   fill: #151c25;
   stroke: var(--accent-2);
   stroke-width: 2;
+  transition: fill 0.15s, stroke 0.15s;
+}
+
+.tree-render circle.active {
+  fill: rgba(244, 189, 45, 0.18);
+  stroke: var(--amber);
+  stroke-width: 2.5;
 }
 
 .tree-render text {
   fill: #f5f7fb;
   font: 800 12px/1 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  transition: fill 0.15s;
+}
+
+.tree-node-active text {
+  fill: var(--amber);
 }
 
 .graph-render {
@@ -843,8 +859,33 @@ svg {
 }
 
 .array-block,
+.tree-block,
 .map-block {
   border-radius: 0;
+}
+
+.tree-block + .array-block,
+.array-block + .tree-block,
+.tree-block + .tree-block {
+  margin-top: 12px;
+}
+
+.tree-summary {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid #3b4451;
+  background: #151c25;
+  color: var(--muted);
+  padding: 0 10px;
+  font: 12px/1 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.tree-summary strong {
+  color: #f2f5fb;
+  font-weight: 800;
 }
 
 .variable-title {
@@ -945,7 +986,7 @@ svg {
 .trace-log.expanded {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  max-height: 280px;
+  max-height: 220px;
 }
 
 .trace-log-toggle {

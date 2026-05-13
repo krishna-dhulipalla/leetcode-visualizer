@@ -279,6 +279,7 @@ function useTracePlayback(frames) {
 function categorizeVariables(locals = {}) {
   const groups = {
     arrays: [],
+    trees: [],
     maps: [],
     sets: [],
     scalars: [],
@@ -286,8 +287,10 @@ function categorizeVariables(locals = {}) {
   };
 
   Object.entries(locals).forEach(([name, value]) => {
-    if (["array", "tuple", "linked-list", "tree"].includes(value.type)) {
+    if (["array", "tuple", "linked-list"].includes(value.type)) {
       groups.arrays.push({ name, value });
+    } else if (value.type === "tree") {
+      groups.trees.push({ name, value });
     } else if (value.type === "map") {
       groups.maps.push({ name, value });
     } else if (value.type === "set") {
@@ -340,6 +343,38 @@ function isTreeVariable(variable) {
   return variable?.value?.type === "tree";
 }
 
+function treeNodes(variable) {
+  const explicitNodes = variable?.value?.nodes;
+  if (Array.isArray(explicitNodes)) return explicitNodes;
+
+  const levelValues = variable?.value?.value || [];
+  if (!levelValues.length) return [];
+
+  // BFS reconstruction: iterate non-null nodes and assign children in order.
+  // The 2*i+1 / 2*i+2 formula only works for complete binary trees;
+  // LeetCode arrays like [1,2,3,null,null,4,null,5] need BFS assignment.
+  const nodes = levelValues.map((value, index) =>
+    isNullSerialized(value) ? null : { id: index, value, left: null, right: null }
+  );
+
+  let childCursor = 1;
+  for (let i = 0; i < levelValues.length && childCursor < levelValues.length; i++) {
+    if (nodes[i] === null) continue;
+    // assign left child
+    if (childCursor < levelValues.length) {
+      nodes[i].left = nodes[childCursor] ? childCursor : null;
+      childCursor++;
+    }
+    // assign right child
+    if (childCursor < levelValues.length) {
+      nodes[i].right = nodes[childCursor] ? childCursor : null;
+      childCursor++;
+    }
+  }
+
+  return nodes.filter(Boolean);
+}
+
 function matrixRows(variable) {
   const rows = variable?.value?.value;
   if (!Array.isArray(rows)) return [];
@@ -361,14 +396,21 @@ function variableByName(locals, name) {
   return value ? { name, value } : null;
 }
 
-function buildVisualizationChoices(locals = {}) {
+function buildVisualizationChoices(locals = {}, traceArgs = {}) {
   const variables = localVariables(locals);
   const scalars = variables.filter((variable) => scalarInteger(variable) !== null);
+
+  // Include tree variables from the original function arguments too,
+  // since during recursion the local `root` is often a single subtree node.
+  const localTrees = variables.filter(isTreeVariable);
+  const argTrees = localVariables(traceArgs).filter(isTreeVariable);
+  const treeNames = new Set(localTrees.map((t) => t.name));
+  const allTrees = [...localTrees, ...argTrees.filter((t) => !treeNames.has(t.name))];
 
   return {
     sequences: variables.filter(isSequenceVariable),
     scalars,
-    trees: variables.filter(isTreeVariable),
+    trees: allTrees,
     graphs: variables.filter(isGraphVariable),
     tables: variables.filter(isTableVariable)
   };
@@ -507,6 +549,28 @@ function ArrayValue({ variable, changed }) {
         )}
       </div>
       {cycleTo !== null && cycleTo !== undefined && <div className="cycle-note">cycle points to index {cycleTo}</div>}
+    </div>
+  );
+}
+
+function TreeValue({ variable, changed }) {
+  const nodes = treeNodes(variable);
+  const root = nodes[0];
+
+  return (
+    <div className={`tree-block ${changed ? "changed" : ""}`}>
+      <div className="variable-title">
+        <span>{variable.name}</span>
+        <small>{nodes.length} nodes</small>
+      </div>
+      {root ? (
+        <div className="tree-summary">
+          <span>root</span>
+          <strong>{valueLabel(root.value)}</strong>
+        </div>
+      ) : (
+        <span className="empty-state">(empty tree)</span>
+      )}
     </div>
   );
 }
@@ -704,50 +768,107 @@ function isNullSerialized(value) {
   return value?.type === "none" || value?.label === "null" || value?.value === null;
 }
 
-function TreeVisualization({ locals, roles }) {
-  const tree = variableByName(locals, roles.tree);
-  const nodes = tree?.value?.value || [];
-  const visibleNodes = nodes.map((node, index) => ({ node, index })).filter(({ node }) => !isNullSerialized(node));
+function findCurrentNodeValue(locals, treeName) {
+  // During recursion, the local variable with the same name as the tree arg
+  // (e.g. `root`) is often a subtree node. Extract its val to highlight it.
+  const localVar = locals?.[treeName];
+  if (!localVar) return null;
+  // If it's still a full tree, don't highlight anything special
+  if (localVar.type === "tree") {
+    const vals = localVar.value || [];
+    if (vals.length > 1) return null;
+    // Single-node tree: highlight that node's val
+    if (vals.length === 1 && !isNullSerialized(vals[0])) {
+      return vals[0].value !== undefined ? vals[0].value : vals[0].label;
+    }
+    return null;
+  }
+  // If it's an object (TreeNode serialized as object with val attribute)
+  if (localVar.type === "object" && typeof localVar.value === "object" && localVar.value?.val) {
+    const v = localVar.value.val;
+    return v.value !== undefined ? v.value : v.label;
+  }
+  return null;
+}
 
-  if (!tree || !visibleNodes.length) {
+function TreeVisualization({ locals, roles, traceArgs }) {
+  // Try to get the tree from locals first, then fall back to traceArgs
+  // for the full tree (during recursion, local `root` is just a subtree node)
+  let tree = variableByName(locals, roles.tree);
+  let fullTree = variableByName(traceArgs, roles.tree);
+
+  // Decide which to render: prefer the one with more nodes
+  const localNodes = treeNodes(tree);
+  const argNodes = treeNodes(fullTree);
+  const useArgTree = fullTree && argNodes.length > localNodes.length;
+  const displayTree = useArgTree ? fullTree : tree;
+  const nodes = useArgTree ? argNodes : localNodes;
+
+  // Find which node is currently being visited (for highlighting)
+  const currentVal = useArgTree ? findCurrentNodeValue(locals, roles.tree) : null;
+
+  if (!displayTree || !nodes.length) {
     return <GuidanceMessage>Choose a TreeNode variable from the trace.</GuidanceMessage>;
   }
 
-  const width = 760;
-  const levelCount = Math.floor(Math.log2(nodes.length || 1)) + 1;
-  const height = Math.max(110, levelCount * 74);
+  const byId = new Map(nodes.map((node) => [node.id, node]));
   const positions = new Map();
+  const levels = [];
+  const visited = new Set([nodes[0].id]);
+  const queue = [{ id: nodes[0].id, depth: 0 }];
 
-  visibleNodes.forEach(({ index }) => {
-    const level = Math.floor(Math.log2(index + 1));
-    const levelStart = 2 ** level - 1;
-    const offset = index - levelStart;
-    const slots = 2 ** level + 1;
-    positions.set(index, {
-      x: Math.round(((offset + 1) / slots) * width),
-      y: 32 + level * 70
+  while (queue.length) {
+    const { id, depth } = queue.shift();
+    const node = byId.get(id);
+    if (!node) continue;
+    if (!levels[depth]) levels[depth] = [];
+    levels[depth].push(node);
+
+    [node.left, node.right].forEach((childId) => {
+      if (childId !== null && childId !== undefined && byId.has(childId) && !visited.has(childId)) {
+        visited.add(childId);
+        queue.push({ id: childId, depth: depth + 1 });
+      }
+    });
+  }
+
+  const nodeRadius = 18;
+  const levelSpacing = 52;
+  const width = 720;
+  const height = Math.max(110, nodeRadius * 2 + 16 + (levels.length - 1) * levelSpacing);
+
+  // Position nodes: use a width-division approach per level
+  levels.forEach((levelNodes, depth) => {
+    levelNodes.forEach((node, index) => {
+      positions.set(node.id, {
+        x: Math.round(((index + 1) / (levelNodes.length + 1)) * width),
+        y: nodeRadius + 8 + depth * levelSpacing
+      });
     });
   });
 
-  const edges = visibleNodes.flatMap(({ index }) => {
-    const children = [2 * index + 1, 2 * index + 2];
+  const visibleNodes = nodes.filter((node) => positions.has(node.id));
+  const edges = visibleNodes.flatMap((node) => {
+    const children = [node.left, node.right];
     return children
-      .filter((childIndex) => positions.has(childIndex))
-      .map((childIndex) => ({ from: positions.get(index), to: positions.get(childIndex), key: `${index}-${childIndex}` }));
+      .filter((childId) => childId !== null && childId !== undefined && positions.has(childId))
+      .map((childId) => ({ from: positions.get(node.id), to: positions.get(childId), key: `${node.id}-${childId}` }));
   });
 
   return (
     <div className="guided-render tree-render">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${tree.name} tree visualization`}>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${displayTree.name} tree visualization`}>
         {edges.map((edge) => (
           <line key={edge.key} x1={edge.from.x} y1={edge.from.y} x2={edge.to.x} y2={edge.to.y} />
         ))}
-        {visibleNodes.map(({ node, index }) => {
-          const position = positions.get(index);
+        {visibleNodes.map((node) => {
+          const position = positions.get(node.id);
+          const nodeVal = node.value?.value !== undefined ? node.value.value : node.value?.label;
+          const isCurrent = currentVal !== null && String(nodeVal) === String(currentVal);
           return (
-            <g key={index} transform={`translate(${position.x} ${position.y})`}>
-              <circle r="18" />
-              <text textAnchor="middle" dominantBaseline="central">{valueLabel(node)}</text>
+            <g key={node.id} transform={`translate(${position.x} ${position.y})`} className={isCurrent ? "tree-node-active" : ""}>
+              <circle r={nodeRadius} className={isCurrent ? "active" : ""} />
+              <text textAnchor="middle" dominantBaseline="central">{valueLabel(node.value)}</text>
             </g>
           );
         })}
@@ -811,19 +932,20 @@ function DpVisualization({ locals, roles }) {
   );
 }
 
-function GuidedVisualization({ type, locals, roles }) {
+function GuidedVisualization({ type, locals, roles, traceArgs }) {
   if (type === VISUALIZATION_TYPES.pointers) return <PointerVisualization locals={locals} roles={roles} />;
   if (type === VISUALIZATION_TYPES.window) return <WindowVisualization locals={locals} roles={roles} />;
-  if (type === VISUALIZATION_TYPES.tree) return <TreeVisualization locals={locals} roles={roles} />;
+  if (type === VISUALIZATION_TYPES.tree) return <TreeVisualization locals={locals} roles={roles} traceArgs={traceArgs} />;
   if (type === VISUALIZATION_TYPES.graph) return <GraphVisualization locals={locals} roles={roles} />;
   if (type === VISUALIZATION_TYPES.dp) return <DpVisualization locals={locals} roles={roles} />;
   return null;
 }
 
-function Visualization({ frame, previousFrame, sourceLines, visualType, setVisualType, visualRoles, setVisualRoles }) {
+function Visualization({ frame, previousFrame, sourceLines, traceArgs, visualType, setVisualType, visualRoles, setVisualRoles }) {
   const groups = useMemo(() => categorizeVariables(frame?.locals), [frame]);
   const changed = useMemo(() => changedNames(frame?.locals, previousFrame?.locals), [frame, previousFrame]);
-  const choices = useMemo(() => buildVisualizationChoices(frame?.locals), [frame]);
+  const visualizationLocals = useMemo(() => ({ ...(traceArgs || {}), ...(frame?.locals || {}) }), [frame, traceArgs]);
+  const choices = useMemo(() => buildVisualizationChoices(visualizationLocals, traceArgs), [visualizationLocals, traceArgs]);
   const resolvedRoles = useMemo(() => resolveVisualizationRoles(visualType, visualRoles, choices), [choices, visualRoles, visualType]);
   const lineText = frame?.displayLineText || frame?.lineText || "";
   const lineNumber = frame?.displayLine ?? frame?.line;
@@ -855,21 +977,26 @@ function Visualization({ frame, previousFrame, sourceLines, visualType, setVisua
           resolvedRoles={resolvedRoles}
         />
         {visualType !== VISUALIZATION_TYPES.default ? (
-          <GuidedVisualization type={visualType} locals={frame?.locals || {}} roles={resolvedRoles} />
+          <GuidedVisualization type={visualType} locals={visualizationLocals} roles={resolvedRoles} traceArgs={traceArgs} />
         ) : null}
       </section>
 
       <section className="panel data-panel arrays-panel">
         <div className="panel-header">
-          <span>Arrays / Lists</span>
+          <span>{groups.trees.length ? "Arrays / Lists / Trees" : "Arrays / Lists"}</span>
         </div>
         <div className="panel-body">
-          {groups.arrays.length === 0 ? (
+          {groups.arrays.length === 0 && groups.trees.length === 0 ? (
             <span className="empty-state">(empty)</span>
           ) : (
-            groups.arrays.map((variable) => (
-              <ArrayValue key={variable.name} variable={variable} changed={changed.has(variable.name)} />
-            ))
+            <>
+              {groups.arrays.map((variable) => (
+                <ArrayValue key={variable.name} variable={variable} changed={changed.has(variable.name)} />
+              ))}
+              {groups.trees.map((variable) => (
+                <TreeValue key={variable.name} variable={variable} changed={changed.has(variable.name)} />
+              ))}
+            </>
           )}
         </div>
       </section>
@@ -1106,31 +1233,30 @@ function App() {
             footer={<span className="optional-label">Optional</span>}
             minLines={2}
           />
-        </div>
-
-        <section className="panel right-column">
-          <div className="panel-header">
-            <span>Trace / Visualization</span>
-            <button className="raw-log-shortcut" type="button" onClick={() => setIsRawLogOpen((open) => !open)} disabled={!rawFrames.length}>
-              {isRawLogOpen ? "Hide raw log" : `${rawFrames.length} raw snapshots`}
-            </button>
-          </div>
-          <Playback frames={visibleFrames} rawCount={rawFrames.length} playback={playback} traceMode={traceMode} setTraceMode={setTraceMode} />
-          <Visualization
-            frame={currentFrame}
-            previousFrame={previousFrame}
-            sourceLines={trace?.sourceLines}
-            visualType={visualType}
-            setVisualType={setVisualType}
-            visualRoles={visualRoles}
-            setVisualRoles={setVisualRoles}
-          />
           <TraceLog
             frames={rawFrames}
             currentRawStep={currentFrame?.rawIndex ?? 0}
             selectRawStep={selectRawStep}
             isOpen={isRawLogOpen}
             setIsOpen={setIsRawLogOpen}
+          />
+        </div>
+
+        <section className="panel right-column">
+          <div className="panel-header">
+            <span>Trace / Visualization</span>
+            <span className="trace-meta">{rawFrames.length} raw snapshots</span>
+          </div>
+          <Playback frames={visibleFrames} rawCount={rawFrames.length} playback={playback} traceMode={traceMode} setTraceMode={setTraceMode} />
+          <Visualization
+            frame={currentFrame}
+            previousFrame={previousFrame}
+            sourceLines={trace?.sourceLines}
+            traceArgs={trace?.args}
+            visualType={visualType}
+            setVisualType={setVisualType}
+            visualRoles={visualRoles}
+            setVisualRoles={setVisualRoles}
           />
         </section>
       </div>

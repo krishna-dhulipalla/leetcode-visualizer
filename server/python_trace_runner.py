@@ -181,7 +181,7 @@ def serialize_linked_list(head: Optional[ListNode]) -> dict[str, Any]:
 
 def serialize_tree(root: Optional[TreeNode]) -> dict[str, Any]:
     if root is None:
-        return {"type": "tree", "value": []}
+        return {"type": "tree", "value": [], "nodes": []}
 
     output: list[Any] = []
     queue = collections.deque([root])
@@ -197,7 +197,32 @@ def serialize_tree(root: Optional[TreeNode]) -> dict[str, Any]:
     while output and output[-1] is None:
         output.pop()
 
-    return {"type": "tree", "value": [serialize_value(item) if item is not None else {"type": "none", "value": None, "label": "null"} for item in output]}
+    nodes: list[dict[str, Any]] = []
+    node_ids: dict[int, int] = {}
+    node_queue = collections.deque()
+
+    def node_id(node: TreeNode) -> int:
+        object_id = id(node)
+        if object_id not in node_ids:
+            node_ids[object_id] = len(nodes)
+            nodes.append({"id": node_ids[object_id], "value": serialize_value(node.val), "left": None, "right": None})
+            node_queue.append(node)
+        return node_ids[object_id]
+
+    node_id(root)
+    while node_queue and len(nodes) < 120:
+        node = node_queue.popleft()
+        current_id = node_ids[id(node)]
+        if node.left is not None:
+            nodes[current_id]["left"] = node_id(node.left)
+        if node.right is not None:
+            nodes[current_id]["right"] = node_id(node.right)
+
+    return {
+        "type": "tree",
+        "value": [serialize_value(item) if item is not None else {"type": "none", "value": None, "label": "null"} for item in output],
+        "nodes": nodes,
+    }
 
 
 def serialize_value(value: Any, depth: int = 0, seen: Optional[set[int]] = None) -> dict[str, Any]:
@@ -251,7 +276,7 @@ def safe_locals(frame_locals: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {
         key: serialize_value(value)
         for key, value in frame_locals.items()
-        if key not in hidden and not key.startswith("__") and not key.startswith(".")
+        if key not in hidden and not key.startswith("__") and not key.startswith(".") and not callable(value)
     }
 
 
