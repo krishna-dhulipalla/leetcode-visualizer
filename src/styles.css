@@ -39,6 +39,14 @@
   --primary: #21858f;
   --primary-hover: #27929c;
   --active-gutter-text: #101318;
+  --panel-heading: #d5dbe4;
+  --code-line-active: rgba(244, 189, 45, 0.14);
+  --code-line-error: rgba(255, 99, 112, 0.16);
+  --active-arrow: #0f1722;
+  --accent-soft: rgba(39, 146, 156, 0.14);
+  --accent-outline: rgba(97, 199, 206, 0.5);
+  --amber-soft: rgba(244, 189, 45, 0.14);
+  --amber-outline: rgba(244, 189, 45, 0.56);
   --range-border: #4b535c;
   --log-index-bg: #2b3441;
   --scrollbar-track: #0d131a;
@@ -82,6 +90,14 @@
   --primary: #167d88;
   --primary-hover: #126a73;
   --active-gutter-text: #111827;
+  --panel-heading: #334155;
+  --code-line-active: rgba(183, 121, 0, 0.13);
+  --code-line-error: rgba(199, 54, 74, 0.12);
+  --active-arrow: #111827;
+  --accent-soft: rgba(22, 125, 136, 0.11);
+  --accent-outline: rgba(15, 107, 117, 0.42);
+  --amber-soft: rgba(183, 121, 0, 0.12);
+  --amber-outline: rgba(183, 121, 0, 0.52);
   --range-border: #aeb8c6;
   --log-index-bg: #dbe4ef;
   --scrollbar-track: #e8eef6;
@@ -334,7 +350,7 @@ svg {
   min-height: 30px;
   border-bottom: 1px solid var(--line-soft);
   padding: 0 12px;
-  color: #d5dbe4;
+  color: var(--panel-heading);
   font-size: 11.5px;
   font-weight: 800;
   letter-spacing: 0.11em;
@@ -375,7 +391,7 @@ svg {
 
 .tab-label {
   border-radius: 0;
-  background: rgba(39, 146, 156, 0.18);
+  background: var(--accent-soft);
   color: var(--accent-2);
   font-size: 12px;
   font-weight: 800;
@@ -417,7 +433,7 @@ svg {
 .line-gutter .error-line {
   position: relative;
   color: #ffffff;
-  background: rgba(255, 99, 112, 0.72);
+  background: var(--red);
   font-weight: 800;
 }
 
@@ -427,7 +443,7 @@ svg {
   content: "";
   border-top: 6px solid transparent;
   border-bottom: 6px solid transparent;
-  border-left: 9px solid #0f1722;
+  border-left: 9px solid var(--active-arrow);
   top: 3px;
 }
 
@@ -446,6 +462,29 @@ svg {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.line-highlight-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  padding: 10px 14px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.line-highlight-layer div {
+  height: 18.5px;
+}
+
+.line-highlight-layer .active-code-line {
+  background: var(--code-line-active);
+  box-shadow: inset 3px 0 0 var(--amber);
+}
+
+.line-highlight-layer .error-code-line {
+  background: var(--code-line-error);
+  box-shadow: inset 3px 0 0 var(--red);
 }
 
 .syntax-layer {
@@ -571,7 +610,7 @@ svg {
 }
 
 .speed-group .selected {
-  background: rgba(39, 146, 156, 0.18);
+  background: var(--accent-soft);
   color: var(--accent-2);
 }
 
@@ -598,7 +637,7 @@ svg {
 }
 
 .mode-group .selected {
-  background: rgba(39, 146, 156, 0.18);
+  background: var(--accent-soft);
   color: var(--accent-2);
 }
 
@@ -700,7 +739,7 @@ svg {
 
 .execution-strip code {
   overflow: hidden;
-  color: #7fd0d5;
+  color: var(--accent-2);
   font: 12px/1.35 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -783,8 +822,8 @@ svg {
 }
 
 .guided-cell-wrap.in-window {
-  border-color: rgba(97, 199, 206, 0.58);
-  background: rgba(39, 146, 156, 0.12);
+  border-color: var(--accent-outline);
+  background: var(--accent-soft);
 }
 
 .pointer-tags {
@@ -795,8 +834,8 @@ svg {
 }
 
 .pointer-tags span {
-  border: 1px solid rgba(97, 199, 206, 0.45);
-  background: rgba(39, 146, 156, 0.2);
+  border: 1px solid var(--accent-outline);
+  background: var(--accent-soft);
   color: var(--accent-2);
   font: 800 10.5px/1 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   padding: 3px 5px;
@@ -815,7 +854,7 @@ svg {
 
 .guided-cell.pointed {
   border-color: var(--accent-2);
-  box-shadow: inset 0 0 0 1px rgba(97, 199, 206, 0.35);
+  box-shadow: inset 0 0 0 1px var(--accent-outline);
 }
 
 .guidance-message {
@@ -848,7 +887,7 @@ svg {
 }
 
 .tree-render circle.active {
-  fill: rgba(244, 189, 45, 0.18);
+  fill: var(--amber-soft);
   stroke: var(--amber);
   stroke-width: 2.5;
 }
@@ -874,18 +913,18 @@ svg {
   align-items: center;
   min-height: 28px;
   border-bottom: 1px solid var(--line-soft);
-  color: #c9d2df;
+  color: var(--muted);
   font: 12px/1.3 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 }
 
 .graph-row.active {
-  background: rgba(244, 189, 45, 0.1);
+  background: var(--amber-soft);
   color: var(--amber);
 }
 
 .graph-row strong {
   overflow: hidden;
-  color: #edf2ff;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -911,14 +950,20 @@ svg {
   font: 800 12px/1 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 }
 
+.dp-cell small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
 .dp-cell.active-row,
 .dp-cell.active-col {
-  background: rgba(39, 146, 156, 0.14);
-  border-color: rgba(97, 199, 206, 0.48);
+  background: var(--accent-soft);
+  border-color: var(--accent-outline);
 }
 
 .dp-cell.active-cell {
-  background: rgba(244, 189, 45, 0.18);
+  background: var(--amber-soft);
   border-color: var(--amber);
   color: var(--amber);
 }
@@ -986,6 +1031,23 @@ svg {
   gap: 7px;
 }
 
+.matrix-cells {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+}
+
+.matrix-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.matrix-row > .array-index {
+  min-width: 32px;
+  text-align: right;
+}
+
 .array-cell-wrap {
   display: grid;
   gap: 6px;
@@ -1001,6 +1063,18 @@ svg {
   background: var(--cell-bg);
   color: var(--code-text);
   font: 800 15px/1 "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+
+.array-cell.active-cell,
+.map-entry.active-entry {
+  border-color: var(--accent-2);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-outline);
+}
+
+.array-cell.changed-cell {
+  border-color: var(--amber-outline);
+  background: var(--amber-soft);
 }
 
 .array-index {
@@ -1041,8 +1115,8 @@ svg {
 .changed .array-cell,
 .value-row.changed,
 .map-block.changed {
-  border-color: rgba(244, 189, 45, 0.5);
-  background: rgba(244, 189, 45, 0.09);
+  border-color: var(--amber-outline);
+  background: var(--amber-soft);
 }
 
 .empty-state,
@@ -1073,7 +1147,7 @@ svg {
   min-height: 34px;
   border: 0;
   background: transparent;
-  color: #d5dbe4;
+  color: var(--panel-heading);
   padding: 0 12px;
   text-align: left;
 }
@@ -1108,14 +1182,14 @@ svg {
   min-height: 32px;
   border-radius: 0;
   background: transparent;
-  color: #d5dbe4;
+  color: var(--panel-heading);
   padding: 0 8px;
   text-align: left;
 }
 
 .log-row:hover,
 .log-row.selected {
-  background: rgba(39, 146, 156, 0.12);
+  background: var(--accent-soft);
 }
 
 .log-row.selected {

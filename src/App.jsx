@@ -99,6 +99,10 @@ function stableValue(value) {
   }
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const TRACE_MODES = {
   updates: "updates",
   flow: "flow",
@@ -553,6 +557,39 @@ function changedNames(current, previous) {
   return changed;
 }
 
+function changedCellKeys(currentValue, previousValue) {
+  const changed = new Set();
+  const currentItems = currentValue?.value || [];
+  const previousItems = previousValue?.value || [];
+  const length = Math.max(currentItems.length, previousItems.length);
+  for (let index = 0; index < length; index += 1) {
+    if (stableValue(currentItems[index]) !== stableValue(previousItems[index])) {
+      changed.add(String(index));
+    }
+  }
+  return changed;
+}
+
+function changedMatrixCellKeys(currentVariable, previousVariable) {
+  const changed = new Set();
+  const currentRows = matrixRows(currentVariable);
+  const previousRows = matrixRows(previousVariable);
+  const rowCount = Math.max(currentRows.length, previousRows.length);
+
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    const currentRow = currentRows[rowIndex] || [];
+    const previousRow = previousRows[rowIndex] || [];
+    const colCount = Math.max(currentRow.length, previousRow.length);
+    for (let colIndex = 0; colIndex < colCount; colIndex += 1) {
+      if (stableValue(currentRow[colIndex]) !== stableValue(previousRow[colIndex])) {
+        changed.add(`${rowIndex},${colIndex}`);
+      }
+    }
+  }
+
+  return changed;
+}
+
 function localVariables(locals = {}) {
   return Object.entries(locals).map(([name, value]) => ({ name, value }));
 }
@@ -620,11 +657,12 @@ function matrixRows(variable) {
 }
 
 function isTableVariable(variable) {
-  return matrixRows(variable).length > 0;
+  if (matrixRows(variable).length > 0) return true;
+  return ["dp", "memo", "table"].includes(variable?.name) && sequenceItems(variable).length > 0;
 }
 
 function isGraphVariable(variable) {
-  return variable?.value?.type === "map" || isTableVariable(variable);
+  return variable?.value?.type === "map" || matrixRows(variable).length > 0;
 }
 
 function variableByName(locals, name) {
@@ -650,6 +688,101 @@ function buildVisualizationChoices(locals = {}, traceArgs = {}) {
     trees: allTrees,
     graphs: variables.filter(isGraphVariable),
     tables: variables.filter(isTableVariable)
+  };
+}
+
+function evaluateIndexExpression(expression, locals = {}) {
+  const compact = expression.replace(/\s+/g, "");
+  if (!compact || !/^[A-Za-z0-9_+\-]+$/.test(compact)) return null;
+  const terms = compact.match(/[+-]?(?:[A-Za-z_]\w*|\d+)/g);
+  if (!terms || terms.join("") !== compact) return null;
+
+  let total = 0;
+  for (const term of terms) {
+    const sign = term.startsWith("-") ? -1 : 1;
+    const raw = term.replace(/^[+-]/, "");
+    if (/^\d+$/.test(raw)) {
+      total += sign * Number(raw);
+      continue;
+    }
+    const variable = variableByName(locals, raw);
+    const value = scalarInteger(variable);
+    if (value === null) return null;
+    total += sign * value;
+  }
+  return total;
+}
+
+function valueMatches(a, b) {
+  return stableValue(a) === stableValue(b) || valueLabel(a) === valueLabel(b);
+}
+
+function addHighlight(map, name, key) {
+  if (!name || key === null || key === undefined) return;
+  if (!map.has(name)) map.set(name, new Set());
+  map.get(name).add(String(key));
+}
+
+function directSubscriptHighlights(lineText = "", locals = {}) {
+  const highlights = new Map();
+  localVariables(locals).forEach((variable) => {
+    if (!isSequenceVariable(variable)) return;
+    const pattern = new RegExp(`\\b${escapeRegExp(variable.name)}\\s*((?:\\[[^\\]]+\\])+)`, "g");
+    let match = pattern.exec(lineText);
+    while (match) {
+      const indexes = [...match[1].matchAll(/\[([^\]]+)\]/g)]
+        .map((part) => evaluateIndexExpression(part[1], locals))
+        .filter((index) => index !== null);
+      if (indexes.length) {
+        addHighlight(highlights, variable.name, indexes.join(","));
+      }
+      match = pattern.exec(lineText);
+    }
+  });
+  return highlights;
+}
+
+function directIterationHighlights(lineText = "", locals = {}) {
+  const sequenceHighlights = new Map();
+  const entryHighlights = new Map();
+  const match = lineText.trim().match(/^for\s+([A-Za-z_]\w*)\s+in\s+([A-Za-z_]\w*)\s*:/);
+  if (!match) return { sequenceHighlights, entryHighlights };
+
+  const [, itemName, collectionName] = match;
+  const itemValue = locals[itemName];
+  const collection = variableByName(locals, collectionName);
+  if (!itemValue || !collection) return { sequenceHighlights, entryHighlights };
+
+  const items = sequenceItems(collection);
+  if (items.length) {
+    const matches = items.map((value, index) => ({ value, index })).filter((item) => valueMatches(item.value, itemValue));
+    if (matches.length === 1) addHighlight(sequenceHighlights, collectionName, matches[0].index);
+  } else if (collection.value.type === "set") {
+    const matches = (collection.value.value || []).map((value, index) => ({ value, index })).filter((item) => valueMatches(item.value, itemValue));
+    if (matches.length === 1) addHighlight(entryHighlights, collectionName, matches[0].index);
+  } else if (collection.value.type === "map") {
+    const matches = (collection.value.value || [])
+      .map((entry, index) => ({ entry, index }))
+      .filter((item) => valueMatches(item.entry.key, itemValue));
+    if (matches.length === 1) addHighlight(entryHighlights, collectionName, matches[0].index);
+  }
+
+  return { sequenceHighlights, entryHighlights };
+}
+
+function buildActiveHighlights(frame) {
+  const lineText = frame?.displayLineText || frame?.lineText || "";
+  const locals = frame?.locals || {};
+  const sequenceHighlights = directSubscriptHighlights(lineText, locals);
+  const iteration = directIterationHighlights(lineText, locals);
+
+  iteration.sequenceHighlights.forEach((keys, name) => {
+    keys.forEach((key) => addHighlight(sequenceHighlights, name, key));
+  });
+
+  return {
+    sequences: sequenceHighlights,
+    entries: iteration.entryHighlights
   };
 }
 
@@ -689,6 +822,7 @@ function resolveVisualizationRoles(type, roles, choices) {
   if (type === VISUALIZATION_TYPES.dp) {
     return {
       table: selectRole(choices.tables, roles.table, ["dp", "memo", "table"]),
+      index: selectRole(choices.scalars, roles.index, ["i", "j", "amount", "idx", "index"], true),
       row: selectRole(choices.scalars, roles.row, ["i", "row", "r"], true),
       col: selectRole(choices.scalars, roles.col, ["j", "col", "c"], true)
     };
@@ -699,6 +833,8 @@ function resolveVisualizationRoles(type, roles, choices) {
 function CodeEditor({ code, setCode, currentLine, errorLine }) {
   const gutterRef = useRef(null);
   const syntaxRef = useRef(null);
+  const lineHighlightRef = useRef(null);
+  const textareaRef = useRef(null);
   const highlightedCode = useMemo(() => highlightPython(code), [code]);
   const lineCount = Math.max(code.split("\n").length, 18);
   const lines = Array.from({ length: lineCount }, (_, index) => index + 1);
@@ -706,10 +842,58 @@ function CodeEditor({ code, setCode, currentLine, errorLine }) {
     if (gutterRef.current) {
       gutterRef.current.scrollTop = event.currentTarget.scrollTop;
     }
+    if (lineHighlightRef.current) {
+      lineHighlightRef.current.scrollTop = event.currentTarget.scrollTop;
+      lineHighlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
+    }
     if (syntaxRef.current) {
       syntaxRef.current.scrollTop = event.currentTarget.scrollTop;
       syntaxRef.current.scrollLeft = event.currentTarget.scrollLeft;
     }
+  };
+  const restoreSelection = (start, end) => {
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.setSelectionRange(start, end);
+    });
+  };
+  const handleKeyDown = (event) => {
+    if (event.key !== "Tab") return;
+
+    event.preventDefault();
+    const textarea = event.currentTarget;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const indent = "    ";
+
+    if (start === end && !event.shiftKey) {
+      setCode(`${code.slice(0, start)}${indent}${code.slice(end)}`);
+      restoreSelection(start + indent.length, start + indent.length);
+      return;
+    }
+
+    const lineStart = start === 0 ? 0 : code.lastIndexOf("\n", start - 1) + 1;
+    const nextBreak = code.indexOf("\n", end);
+    const lineEnd = nextBreak === -1 ? code.length : nextBreak;
+    const block = code.slice(lineStart, lineEnd);
+    const linesInBlock = block.split("\n");
+
+    if (event.shiftKey) {
+      let removedBeforeSelection = 0;
+      let removedTotal = 0;
+      const unindented = linesInBlock.map((line, index) => {
+        const removeCount = line.startsWith(indent) ? indent.length : line.startsWith("\t") ? 1 : 0;
+        if (index === 0) removedBeforeSelection = removeCount;
+        removedTotal += removeCount;
+        return line.slice(removeCount);
+      }).join("\n");
+      setCode(`${code.slice(0, lineStart)}${unindented}${code.slice(lineEnd)}`);
+      restoreSelection(Math.max(lineStart, start - removedBeforeSelection), Math.max(lineStart, end - removedTotal));
+      return;
+    }
+
+    const indented = linesInBlock.map((line) => `${indent}${line}`).join("\n");
+    setCode(`${code.slice(0, lineStart)}${indented}${code.slice(lineEnd)}`);
+    restoreSelection(start + indent.length, end + indent.length * linesInBlock.length);
   };
 
   return (
@@ -730,12 +914,22 @@ function CodeEditor({ code, setCode, currentLine, errorLine }) {
           ))}
         </div>
         <div className="code-input-wrap">
+          <div className="line-highlight-layer" ref={lineHighlightRef} aria-hidden="true">
+            {lines.map((line) => (
+              <div
+                key={line}
+                className={`${line === currentLine ? "active-code-line" : ""} ${line === errorLine ? "error-code-line" : ""}`}
+              />
+            ))}
+          </div>
           <pre className="syntax-layer" ref={syntaxRef} aria-hidden="true" dangerouslySetInnerHTML={{ __html: highlightedCode }} />
           <textarea
+            ref={textareaRef}
             spellCheck="false"
             wrap="off"
             value={code}
             onChange={(event) => setCode(event.target.value)}
+            onKeyDown={handleKeyDown}
             onScroll={syncGutterScroll}
             aria-label="Python solution code"
           />
@@ -763,28 +957,52 @@ function TextInputPanel({ title, value, setValue, footer, minLines = 5 }) {
   );
 }
 
-function ArrayValue({ variable, changed }) {
+function ArrayValue({ variable, changed, previousValue, activeKeys = new Set() }) {
   const items = variable.value.value || [];
+  const rows = matrixRows(variable);
   const cycleTo = variable.value.cycleTo;
+  const changedKeys = rows.length ? changedMatrixCellKeys(variable, previousValue ? { name: variable.name, value: previousValue } : null) : changedCellKeys(variable.value, previousValue);
+
+  const cellClassName = (key) =>
+    `array-cell ${activeKeys.has(key) ? "active-cell" : ""} ${changedKeys.has(key) ? "changed-cell" : ""}`;
 
   return (
     <div className={`array-block ${changed ? "changed" : ""}`}>
       <div className="variable-title">
         <span>{variable.name}</span>
-        <small>{variable.value.type === "linked-list" ? "linked list" : `${items.length} items`}</small>
+        <small>{rows.length ? `${rows.length} rows` : variable.value.type === "linked-list" ? "linked list" : `${items.length} items`}</small>
       </div>
-      <div className="array-cells">
-        {items.length === 0 ? (
-          <span className="empty-state">(empty)</span>
-        ) : (
-          items.map((item, index) => (
-            <div className="array-cell-wrap" key={`${variable.name}-${index}`}>
-              <div className="array-cell">{valueLabel(item)}</div>
-              <div className="array-index">[{index}]</div>
+      {rows.length ? (
+        <div className="matrix-cells">
+          {rows.map((row, rowIndex) => (
+            <div className="matrix-row" key={`${variable.name}-${rowIndex}`}>
+              <div className="array-index">[{rowIndex}]</div>
+              {row.map((cell, colIndex) => {
+                const key = `${rowIndex},${colIndex}`;
+                return (
+                  <div className="array-cell-wrap" key={key}>
+                    <div className={cellClassName(key)}>{valueLabel(cell)}</div>
+                    <div className="array-index">[{colIndex}]</div>
+                  </div>
+                );
+              })}
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="array-cells">
+          {items.length === 0 ? (
+          <span className="empty-state">(empty)</span>
+          ) : (
+            items.map((item, index) => (
+              <div className="array-cell-wrap" key={`${variable.name}-${index}`}>
+                <div className={cellClassName(String(index))}>{valueLabel(item)}</div>
+                <div className="array-index">[{index}]</div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
       {cycleTo !== null && cycleTo !== undefined && <div className="cycle-note">cycle points to index {cycleTo}</div>}
     </div>
   );
@@ -812,7 +1030,14 @@ function TreeValue({ variable, changed }) {
   );
 }
 
-function ScalarsPanel({ variables, changed }) {
+function scalarChangeDisplay(name, value, previousLocals, changed) {
+  if (!changed.has(name) || !["scalar", "none"].includes(value.type)) return valueLabel(value);
+  const previousValue = previousLocals?.[name];
+  if (previousValue === undefined) return `new: ${valueLabel(value)}`;
+  return `${valueLabel(previousValue)} -> ${valueLabel(value)}`;
+}
+
+function ScalarsPanel({ variables, changed, previousLocals = {} }) {
   return (
     <div className="value-list">
       {variables.length === 0 ? (
@@ -821,7 +1046,7 @@ function ScalarsPanel({ variables, changed }) {
         variables.map(({ name, value }) => (
           <div className={`value-row ${changed.has(name) ? "changed" : ""}`} key={name}>
             <span>{name}</span>
-            <strong>{valueLabel(value)}</strong>
+            <strong>{scalarChangeDisplay(name, value, previousLocals, changed)}</strong>
           </div>
         ))
       )}
@@ -829,29 +1054,62 @@ function ScalarsPanel({ variables, changed }) {
   );
 }
 
-function MapPanel({ variables, changed }) {
+function MapPanel({ variables, changed, activeEntries = new Map() }) {
   if (!variables.length) return <span className="empty-state">(empty)</span>;
 
   return (
     <div className="map-stack">
-      {variables.map(({ name, value }) => (
-        <div className={`map-block ${changed.has(name) ? "changed" : ""}`} key={name}>
-          <div className="variable-title">
-            <span>{name}</span>
-            <small>{value.value.length} entries</small>
+      {variables.map(({ name, value }) => {
+        const activeKeys = activeEntries.get(name) || new Set();
+        return (
+          <div className={`map-block ${changed.has(name) ? "changed" : ""}`} key={name}>
+            <div className="variable-title">
+              <span>{name}</span>
+              <small>{value.value.length} entries</small>
+            </div>
+            {value.value.length === 0 ? (
+              <span className="empty-state">(empty)</span>
+            ) : (
+              value.value.map((entry, index) => (
+                <div className={`map-entry ${activeKeys.has(String(index)) ? "active-entry" : ""}`} key={`${name}-${index}`}>
+                  <span>{valueLabel(entry.key)}</span>
+                  <strong>{valueLabel(entry.value)}</strong>
+                </div>
+              ))
+            )}
           </div>
-          {value.value.length === 0 ? (
-            <span className="empty-state">(empty)</span>
-          ) : (
-            value.value.map((entry, index) => (
-              <div className="map-entry" key={`${name}-${index}`}>
-                <span>{valueLabel(entry.key)}</span>
-                <strong>{valueLabel(entry.value)}</strong>
-              </div>
-            ))
-          )}
-        </div>
-      ))}
+        );
+      })}
+    </div>
+  );
+}
+
+function SetPanel({ variables, changed, activeEntries = new Map() }) {
+  if (!variables.length) return <span className="empty-state">(empty)</span>;
+
+  return (
+    <div className="map-stack">
+      {variables.map(({ name, value }) => {
+        const activeKeys = activeEntries.get(name) || new Set();
+        return (
+          <div className={`map-block ${changed.has(name) ? "changed" : ""}`} key={name}>
+            <div className="variable-title">
+              <span>{name}</span>
+              <small>{value.value.length} items</small>
+            </div>
+            {value.value.length === 0 ? (
+              <span className="empty-state">(empty)</span>
+            ) : (
+              value.value.map((item, index) => (
+                <div className={`map-entry ${activeKeys.has(String(index)) ? "active-entry" : ""}`} key={`${name}-${index}`}>
+                  <span>{index}</span>
+                  <strong>{valueLabel(item)}</strong>
+                </div>
+              ))
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -874,6 +1132,9 @@ function RoleSelect({ label, value, options, onChange, optional = false }) {
 }
 
 function VisualizationControls({ type, setType, roles, setRole, choices, resolvedRoles }) {
+  const selectedTable = choices.tables.find((option) => option.name === resolvedRoles.table);
+  const selectedTableIsMatrix = matrixRows(selectedTable).length > 0;
+
   return (
     <div className="visual-controls">
       <label className="role-select visual-type-select">
@@ -917,8 +1178,14 @@ function VisualizationControls({ type, setType, roles, setRole, choices, resolve
       {type === VISUALIZATION_TYPES.dp ? (
         <>
           <RoleSelect label="Table" value={resolvedRoles.table} options={choices.tables} onChange={(value) => setRole("table", value)} />
-          <RoleSelect label="Row" value={resolvedRoles.row} options={choices.scalars} onChange={(value) => setRole("row", value)} optional />
-          <RoleSelect label="Col" value={resolvedRoles.col} options={choices.scalars} onChange={(value) => setRole("col", value)} optional />
+          {selectedTableIsMatrix ? (
+            <>
+              <RoleSelect label="Row" value={resolvedRoles.row} options={choices.scalars} onChange={(value) => setRole("row", value)} optional />
+              <RoleSelect label="Col" value={resolvedRoles.col} options={choices.scalars} onChange={(value) => setRole("col", value)} optional />
+            </>
+          ) : (
+            <RoleSelect label="Index" value={resolvedRoles.index} options={choices.scalars} onChange={(value) => setRole("index", value)} optional />
+          )}
         </>
       ) : null}
     </div>
@@ -1142,11 +1409,31 @@ function GraphVisualization({ locals, roles }) {
 function DpVisualization({ locals, roles }) {
   const table = variableByName(locals, roles.table);
   const rows = matrixRows(table);
+  const oneDimensionalItems = rows.length ? [] : sequenceItems(table);
   const activeRow = scalarInteger(variableByName(locals, roles.row));
   const activeCol = scalarInteger(variableByName(locals, roles.col));
+  const activeIndex = scalarInteger(variableByName(locals, roles.index));
 
-  if (!table || !rows.length) {
-    return <GuidanceMessage>Choose a 2D array variable such as dp, memo, or table.</GuidanceMessage>;
+  if (!table || (!rows.length && !oneDimensionalItems.length)) {
+    return <GuidanceMessage>Choose a 1D or 2D DP variable such as dp, memo, or table.</GuidanceMessage>;
+  }
+
+  if (!rows.length) {
+    return (
+      <div className="guided-render dp-render">
+        <div className="dp-row">
+          {oneDimensionalItems.map((cell, index) => (
+            <div
+              className={`dp-cell ${index === activeIndex ? "active-cell" : ""}`}
+              key={index}
+            >
+              <span>{valueLabel(cell)}</span>
+              <small>[{index}]</small>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1181,6 +1468,7 @@ function GuidedVisualization({ type, locals, roles, traceArgs }) {
 function Visualization({ frame, previousFrame, sourceLines, traceArgs, visualType, setVisualType, visualRoles, setVisualRoles }) {
   const groups = useMemo(() => categorizeVariables(frame?.locals), [frame]);
   const changed = useMemo(() => changedNames(frame?.locals, previousFrame?.locals), [frame, previousFrame]);
+  const activeHighlights = useMemo(() => buildActiveHighlights(frame), [frame]);
   const visualizationLocals = useMemo(() => ({ ...(traceArgs || {}), ...(frame?.locals || {}) }), [frame, traceArgs]);
   const choices = useMemo(() => buildVisualizationChoices(visualizationLocals, traceArgs), [visualizationLocals, traceArgs]);
   const resolvedRoles = useMemo(() => resolveVisualizationRoles(visualType, visualRoles, choices), [choices, visualRoles, visualType]);
@@ -1228,7 +1516,13 @@ function Visualization({ frame, previousFrame, sourceLines, traceArgs, visualTyp
           ) : (
             <>
               {groups.arrays.map((variable) => (
-                <ArrayValue key={variable.name} variable={variable} changed={changed.has(variable.name)} />
+                <ArrayValue
+                  key={variable.name}
+                  variable={variable}
+                  changed={changed.has(variable.name)}
+                  previousValue={previousFrame?.locals?.[variable.name]}
+                  activeKeys={activeHighlights.sequences.get(variable.name)}
+                />
               ))}
               {groups.trees.map((variable) => (
                 <TreeValue key={variable.name} variable={variable} changed={changed.has(variable.name)} />
@@ -1243,7 +1537,7 @@ function Visualization({ frame, previousFrame, sourceLines, traceArgs, visualTyp
           <span>Scalars</span>
         </div>
         <div className="panel-body">
-          <ScalarsPanel variables={[...groups.scalars, ...groups.objects]} changed={changed} />
+          <ScalarsPanel variables={[...groups.scalars, ...groups.objects]} changed={changed} previousLocals={previousFrame?.locals} />
         </div>
       </section>
 
@@ -1252,7 +1546,7 @@ function Visualization({ frame, previousFrame, sourceLines, traceArgs, visualTyp
           <span>Maps / Dicts</span>
         </div>
         <div className="panel-body">
-          <MapPanel variables={groups.maps} changed={changed} />
+          <MapPanel variables={groups.maps} changed={changed} activeEntries={activeHighlights.entries} />
         </div>
       </section>
 
@@ -1261,7 +1555,7 @@ function Visualization({ frame, previousFrame, sourceLines, traceArgs, visualTyp
           <span>Sets</span>
         </div>
         <div className="panel-body">
-          <ScalarsPanel variables={groups.sets.map((item) => ({ ...item, value: { ...item.value, label: valueLabel(item.value) } }))} changed={changed} />
+          <SetPanel variables={groups.sets} changed={changed} activeEntries={activeHighlights.entries} />
         </div>
       </section>
     </div>

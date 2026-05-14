@@ -2,7 +2,7 @@
 
 LeetCode Solution Visualizer is a browser-based tool for understanding how Python solutions change state while they run. It is built for learners who want to inspect variables and data structures directly instead of reading a long raw execution log or relying on generated explanations.
 
-![LeetCode Solution Visualizer screenshot](assets/screenshot.png)
+![LeetCode Solution Visualizer screenshot](assets/hero.png)
 
 ## Why This Exists
 

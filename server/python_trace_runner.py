@@ -74,7 +74,11 @@ def parse_testcase(raw: str) -> tuple[dict[str, Any], list[Any]]:
                 ordered.append(parsed)
                 continue
 
-        ordered.append(parse_value(stripped))
+        parsed = parse_value(stripped)
+        if isinstance(parsed, tuple):
+            ordered.extend(parsed)
+        else:
+            ordered.append(parsed)
 
     return named, ordered
 
@@ -123,7 +127,17 @@ def convert_arg(param_name: str, value: Any, annotation: Any, named: dict[str, A
         return build_linked_list(value, named.get("pos"))
     if ("TreeNode" in hint or param_name in {"root", "tree"}) and isinstance(value, list):
         return build_tree(value)
+    if isinstance(value, tuple) and ("List[" in hint or "list[" in hint or hint in {"list", "<class 'list'>"}):
+        return list(value)
     return value
+
+
+def non_finite_label(value: float) -> Optional[str]:
+    if math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    if math.isnan(value):
+        return "nan"
+    return None
 
 
 def display_value(value: Any, depth: int = 0, seen: Optional[set[int]] = None) -> str:
@@ -135,6 +149,10 @@ def display_value(value: Any, depth: int = 0, seen: Optional[set[int]] = None) -
         return "null"
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, float):
+        special_label = non_finite_label(value)
+        if special_label:
+            return special_label
     if isinstance(value, (int, float, str)):
         return json.dumps(value) if isinstance(value, str) else str(value)
     if isinstance(value, ListNode):
@@ -235,6 +253,10 @@ def serialize_value(value: Any, depth: int = 0, seen: Optional[set[int]] = None)
         return {"type": "none", "value": None, "label": "null"}
     if isinstance(value, bool):
         return {"type": "scalar", "value": value, "label": "true" if value else "false"}
+    if isinstance(value, float):
+        special_label = non_finite_label(value)
+        if special_label:
+            return {"type": "scalar", "value": None, "label": special_label}
     if isinstance(value, (int, float, str)):
         return {"type": "scalar", "value": value, "label": display_value(value)}
     if isinstance(value, ListNode):
@@ -544,7 +566,7 @@ def extract_error_location(exc: Exception) -> tuple[Optional[int], str]:
 def main():
     payload = json.loads(sys.stdin.read() or "{}")
     try:
-        print(json.dumps(run_trace(payload)))
+        print(json.dumps(run_trace(payload), allow_nan=False))
     except Exception as exc:
         error_line, error_line_text = extract_error_location(exc)
         error_payload = {
@@ -555,7 +577,7 @@ def main():
         if error_line is not None:
             error_payload["errorLine"] = error_line
             error_payload["errorLineText"] = error_line_text
-        print(json.dumps(error_payload))
+        print(json.dumps(error_payload, allow_nan=False))
 
 
 if __name__ == "__main__" and not globals().get("__PYODIDE_RUNNER__"):

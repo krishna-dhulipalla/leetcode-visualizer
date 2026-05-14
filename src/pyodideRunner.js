@@ -42,7 +42,7 @@ import json
 
 payload = json.loads(__trace_payload_json)
 try:
-    __trace_result_json = json.dumps(run_trace(payload))
+    __trace_result_json = json.dumps(run_trace(payload), allow_nan=False)
 except Exception as exc:
     error_line, error_line_text = extract_error_location(exc)
     error_payload = {
@@ -53,7 +53,7 @@ except Exception as exc:
     if error_line is not None:
         error_payload["errorLine"] = error_line
         error_payload["errorLineText"] = error_line_text
-    __trace_result_json = json.dumps(error_payload)
+    __trace_result_json = json.dumps(error_payload, allow_nan=False)
 __trace_result_json
 `;
 
