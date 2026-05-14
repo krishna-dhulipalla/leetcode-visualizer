@@ -363,6 +363,8 @@ pos = 1`,
   }
 ];
 
+const DEFAULT_PRESET = PROBLEM_PRESETS.find((preset) => preset.id === "two-sum-ii") || PROBLEM_PRESETS[0];
+
 const PYTHON_KEYWORDS = new Set([
   "and",
   "as",
@@ -770,19 +772,88 @@ function directIterationHighlights(lineText = "", locals = {}) {
   return { sequenceHighlights, entryHighlights };
 }
 
-function buildActiveHighlights(frame) {
+function highlightCollectionValue(collection, itemValue, sequenceHighlights, entryHighlights) {
+  const items = sequenceItems(collection);
+  if (items.length) {
+    const matches = items.map((value, index) => ({ value, index })).filter((item) => valueMatches(item.value, itemValue));
+    if (matches.length === 1) addHighlight(sequenceHighlights, collection.name, matches[0].index);
+  } else if (collection.value.type === "set") {
+    const matches = (collection.value.value || []).map((value, index) => ({ value, index })).filter((item) => valueMatches(item.value, itemValue));
+    if (matches.length === 1) addHighlight(entryHighlights, collection.name, matches[0].index);
+  } else if (collection.value.type === "map") {
+    const matches = (collection.value.value || [])
+      .map((entry, index) => ({ entry, index }))
+      .filter((item) => valueMatches(item.entry.key, itemValue));
+    if (matches.length === 1) addHighlight(entryHighlights, collection.name, matches[0].index);
+  }
+}
+
+function loopContextHighlights(loops = [], locals = {}) {
+  const sequenceHighlights = new Map();
+  const entryHighlights = new Map();
+
+  loops.forEach((loop) => {
+    const collection = variableByName(locals, loop.collectionName);
+    if (!collection) return;
+
+    if (loop.iteratorKind === "rangeLen") {
+      const index = scalarInteger(variableByName(locals, loop.indexName));
+      if (index !== null && index >= 0 && index < sequenceItems(collection).length) {
+        addHighlight(sequenceHighlights, collection.name, index);
+      }
+      return;
+    }
+
+    if (loop.iteratorKind === "enumerate") {
+      const index = scalarInteger(variableByName(locals, loop.indexName));
+      if (index !== null && index >= 0 && index < sequenceItems(collection).length) {
+        addHighlight(sequenceHighlights, collection.name, index);
+        return;
+      }
+      const itemValue = locals[loop.itemName];
+      if (itemValue) highlightCollectionValue(collection, itemValue, sequenceHighlights, entryHighlights);
+      return;
+    }
+
+    if (loop.iteratorKind === "direct") {
+      const itemName = loop.targetNames?.[0];
+      const itemValue = locals[itemName];
+      if (itemValue) highlightCollectionValue(collection, itemValue, sequenceHighlights, entryHighlights);
+    }
+  });
+
+  return { sequenceHighlights, entryHighlights };
+}
+
+function mergeHighlightMaps(target, source) {
+  source.forEach((keys, name) => {
+    keys.forEach((key) => addHighlight(target, name, key));
+  });
+}
+
+function activeLoopStack(controlFlow = [], lineNumber) {
+  if (!lineNumber) return [];
+  return controlFlow
+    .filter((item) => item.type && lineNumber >= item.line && lineNumber <= item.endLine)
+    .sort((a, b) => (a.line - b.line) || (a.column - b.column));
+}
+
+function buildActiveHighlights(frame, activeLoops = []) {
   const lineText = frame?.displayLineText || frame?.lineText || "";
   const locals = frame?.locals || {};
   const sequenceHighlights = directSubscriptHighlights(lineText, locals);
+  const entryHighlights = new Map();
   const iteration = directIterationHighlights(lineText, locals);
+  const loopHighlights = loopContextHighlights(activeLoops, locals);
 
-  iteration.sequenceHighlights.forEach((keys, name) => {
-    keys.forEach((key) => addHighlight(sequenceHighlights, name, key));
-  });
+  mergeHighlightMaps(sequenceHighlights, iteration.sequenceHighlights);
+  mergeHighlightMaps(sequenceHighlights, loopHighlights.sequenceHighlights);
+  mergeHighlightMaps(entryHighlights, iteration.entryHighlights);
+  mergeHighlightMaps(entryHighlights, loopHighlights.entryHighlights);
 
   return {
     sequences: sequenceHighlights,
-    entries: iteration.entryHighlights
+    entries: entryHighlights
   };
 }
 
@@ -1131,6 +1202,21 @@ function RoleSelect({ label, value, options, onChange, optional = false }) {
   );
 }
 
+function ActiveFlowPanel({ loops }) {
+  return (
+    <section className="active-flow-strip" aria-label="Active loop context">
+      <span>Active loop</span>
+      <div className="active-flow-stack">
+        {loops.map((loop, index) => (
+          <code className={index === loops.length - 1 ? "current" : ""} key={`${loop.line}-${loop.column}`}>
+            {loop.text}
+          </code>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function VisualizationControls({ type, setType, roles, setRole, choices, resolvedRoles }) {
   const selectedTable = choices.tables.find((option) => option.name === resolvedRoles.table);
   const selectedTableIsMatrix = matrixRows(selectedTable).length > 0;
@@ -1465,32 +1551,20 @@ function GuidedVisualization({ type, locals, roles, traceArgs }) {
   return null;
 }
 
-function Visualization({ frame, previousFrame, sourceLines, traceArgs, visualType, setVisualType, visualRoles, setVisualRoles }) {
+function Visualization({ frame, previousFrame, controlFlow, traceArgs, visualType, setVisualType, visualRoles, setVisualRoles }) {
   const groups = useMemo(() => categorizeVariables(frame?.locals), [frame]);
   const changed = useMemo(() => changedNames(frame?.locals, previousFrame?.locals), [frame, previousFrame]);
-  const activeHighlights = useMemo(() => buildActiveHighlights(frame), [frame]);
+  const lineNumber = frame?.displayLine ?? frame?.line;
+  const activeLoops = useMemo(() => activeLoopStack(controlFlow, lineNumber), [controlFlow, lineNumber]);
+  const activeHighlights = useMemo(() => buildActiveHighlights(frame, activeLoops), [activeLoops, frame]);
   const visualizationLocals = useMemo(() => ({ ...(traceArgs || {}), ...(frame?.locals || {}) }), [frame, traceArgs]);
   const choices = useMemo(() => buildVisualizationChoices(visualizationLocals, traceArgs), [visualizationLocals, traceArgs]);
   const resolvedRoles = useMemo(() => resolveVisualizationRoles(visualType, visualRoles, choices), [choices, visualRoles, visualType]);
-  const lineText = frame?.displayLineText || frame?.lineText || "";
-  const lineNumber = frame?.displayLine ?? frame?.line;
-  const stateLabel =
-    frame?.displayMode === "initial"
-      ? "Initial state at line"
-      : frame?.displayMode === "update"
-        ? "State after line"
-        : frame?.event === "return"
-          ? "Returned at line"
-          : "Executing line";
   const setRole = (name, value) => setVisualRoles((current) => ({ ...current, [name]: value }));
 
   return (
     <div className={`visual-grid ${visualType !== VISUALIZATION_TYPES.default ? "with-guidance" : ""}`}>
-      <div className="execution-strip">
-        <span>{stateLabel} {lineNumber ?? "-"}</span>
-        <code>{lineText.trim() || sourceLines?.[lineNumber - 1] || "Waiting for trace"}</code>
-        <em>{frame?.changed?.length ? `Changed ${frame.changed.join(", ")}` : "Current State"}</em>
-      </div>
+      <ActiveFlowPanel loops={activeLoops} />
 
       <section className="guided-panel">
         <VisualizationControls
@@ -1667,10 +1741,10 @@ function ResultBar({ trace, error, errorLine, expectedOutput }) {
 }
 
 function App() {
-  const [selectedPreset, setSelectedPreset] = useState(PROBLEM_PRESETS[0].id);
-  const [code, setCode] = useState(DEFAULT_CODE);
-  const [testcase, setTestcase] = useState(DEFAULT_TESTCASE);
-  const [expectedOutput, setExpectedOutput] = useState(DEFAULT_EXPECTED_OUTPUT);
+  const [selectedPreset, setSelectedPreset] = useState(DEFAULT_PRESET.id);
+  const [code, setCode] = useState(DEFAULT_PRESET.code);
+  const [testcase, setTestcase] = useState(DEFAULT_PRESET.testcase);
+  const [expectedOutput, setExpectedOutput] = useState(DEFAULT_PRESET.expectedOutput);
   const [trace, setTrace] = useState(null);
   const [error, setError] = useState("");
   const [errorLine, setErrorLine] = useState(null);
@@ -1837,7 +1911,7 @@ function App() {
           <Visualization
             frame={currentFrame}
             previousFrame={previousFrame}
-            sourceLines={trace?.sourceLines}
+            controlFlow={trace?.controlFlow}
             traceArgs={trace?.args}
             visualType={visualType}
             setVisualType={setVisualType}

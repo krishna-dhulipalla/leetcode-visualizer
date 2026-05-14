@@ -132,6 +132,106 @@ def convert_arg(param_name: str, value: Any, annotation: Any, named: dict[str, A
     return value
 
 
+def source_segment(code: str, node: ast.AST, fallback: str = "") -> str:
+    segment = ast.get_source_segment(code, node)
+    return segment.strip() if segment else fallback
+
+
+def target_names(node: ast.AST) -> list[str]:
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, (ast.Tuple, ast.List)):
+        names: list[str] = []
+        for item in node.elts:
+            names.extend(target_names(item))
+        return names
+    return []
+
+
+def loop_iterator_metadata(node: ast.For, code: str) -> dict[str, Any]:
+    names = target_names(node.target)
+    metadata: dict[str, Any] = {
+        "targetNames": names,
+        "iteratorText": source_segment(code, node.iter),
+    }
+
+    iterator = node.iter
+    if isinstance(iterator, ast.Name):
+        metadata.update({"iteratorKind": "direct", "collectionName": iterator.id})
+    elif (
+        isinstance(iterator, ast.Call)
+        and isinstance(iterator.func, ast.Name)
+        and iterator.func.id == "enumerate"
+        and iterator.args
+        and isinstance(iterator.args[0], ast.Name)
+    ):
+        metadata.update(
+            {
+                "iteratorKind": "enumerate",
+                "collectionName": iterator.args[0].id,
+                "indexName": names[0] if names else "",
+                "itemName": names[1] if len(names) > 1 else "",
+            }
+        )
+    elif (
+        isinstance(iterator, ast.Call)
+        and isinstance(iterator.func, ast.Name)
+        and iterator.func.id == "range"
+        and len(iterator.args) == 1
+        and isinstance(iterator.args[0], ast.Call)
+        and isinstance(iterator.args[0].func, ast.Name)
+        and iterator.args[0].func.id == "len"
+        and iterator.args[0].args
+        and isinstance(iterator.args[0].args[0], ast.Name)
+    ):
+        metadata.update(
+            {
+                "iteratorKind": "rangeLen",
+                "collectionName": iterator.args[0].args[0].id,
+                "indexName": names[0] if names else "",
+            }
+        )
+
+    return metadata
+
+
+def build_control_flow_metadata(code: str) -> list[dict[str, Any]]:
+    tree = ast.parse(code, filename=USER_FILENAME)
+    loops: list[dict[str, Any]] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.For, ast.While)):
+            continue
+
+        line = getattr(node, "lineno", None)
+        end_line = getattr(node, "end_lineno", line)
+        if line is None or end_line is None:
+            continue
+
+        if isinstance(node, ast.For):
+            record = {
+                "type": "for",
+                "line": line,
+                "endLine": end_line,
+                "column": getattr(node, "col_offset", 0),
+                "text": source_segment(code, node, "").splitlines()[0].strip(),
+            }
+            record.update(loop_iterator_metadata(node, code))
+        else:
+            record = {
+                "type": "while",
+                "line": line,
+                "endLine": end_line,
+                "column": getattr(node, "col_offset", 0),
+                "text": source_segment(code, node, "").splitlines()[0].strip(),
+                "conditionText": source_segment(code, node.test),
+            }
+
+        loops.append(record)
+
+    return sorted(loops, key=lambda item: (item["line"], item["column"]))
+
+
 def non_finite_label(value: float) -> Optional[str]:
     if math.isinf(value):
         return "inf" if value > 0 else "-inf"
@@ -484,6 +584,7 @@ def run_trace(payload: dict[str, Any]) -> dict[str, Any]:
     testcase = payload.get("testcase", "")
     function_name = payload.get("functionName") or None
     source_lines = code.splitlines()
+    control_flow = build_control_flow_metadata(code)
     warnings = []
     stdout_buffer = io.StringIO()
 
@@ -547,6 +648,7 @@ def run_trace(payload: dict[str, Any]) -> dict[str, Any]:
         "frames": frames,
         "result": serialize_value(result),
         "sourceLines": source_lines,
+        "controlFlow": control_flow,
         "stdout": stdout_buffer.getvalue(),
         "warnings": warnings,
     }

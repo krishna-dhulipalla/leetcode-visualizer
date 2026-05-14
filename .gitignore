@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.log
 qa-*.png
+_pycache__/
+*.
+project
+docs/
