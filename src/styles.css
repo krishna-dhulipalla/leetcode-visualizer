@@ -184,24 +184,26 @@ svg {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(220px, 420px) auto auto auto auto;
+  grid-template-columns: minmax(210px, 1fr) minmax(190px, 360px) auto auto auto auto auto;
   align-items: center;
-  gap: 12px;
-  min-height: 52px;
-  padding: 8px 12px;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 10px;
   border-radius: 0;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-width: 0;
 }
 
 .brand strong {
-  font-size: 14px;
+  overflow: hidden;
+  font-size: 13px;
   letter-spacing: 0;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -223,14 +225,14 @@ svg {
 .language-select {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .problem-select span,
 .preset-select span,
 .language-select span {
   color: var(--dim);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   line-height: 1;
   text-transform: uppercase;
@@ -239,7 +241,7 @@ svg {
 .problem-select input,
 .preset-select select,
 .language-select select {
-  height: 34px;
+  height: 32px;
   border: 1px solid var(--line);
   border-radius: 0;
   background: var(--control-bg);
@@ -255,7 +257,7 @@ svg {
 }
 
 .language-select select {
-  width: 132px;
+  width: 112px;
 }
 
 .language-select select {
@@ -264,6 +266,7 @@ svg {
 
 .primary-button,
 .secondary-button,
+.github-button,
 .play-button,
 .icon-button,
 .speed-group button,
@@ -273,14 +276,17 @@ svg {
 }
 
 .primary-button,
-.secondary-button {
+.secondary-button,
+.github-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 34px;
+  gap: 6px;
+  height: 32px;
   border-radius: 0;
-  padding: 0 14px;
+  padding: 0 11px;
+  font-size: 13px;
+  text-decoration: none;
   white-space: nowrap;
 }
 
@@ -298,6 +304,19 @@ svg {
   background: var(--control-bg-2);
   border-color: var(--line);
   color: var(--muted);
+}
+
+.github-button {
+  border: 1px solid var(--line);
+  background: var(--control-bg);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.github-button:hover {
+  border-color: var(--accent-outline);
+  background: var(--accent-soft);
+  color: var(--accent-2);
 }
 
 .workspace {
@@ -1322,7 +1341,7 @@ svg {
 
 @media (max-width: 1220px) {
   .topbar {
-    grid-template-columns: minmax(190px, 1fr) minmax(240px, 1.2fr) auto auto;
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 300px) auto auto auto auto auto;
     gap: 8px;
   }
 
@@ -1339,7 +1358,7 @@ svg {
   }
 
   .preset-select select {
-    min-width: 190px;
+    min-width: 180px;
   }
 }
 

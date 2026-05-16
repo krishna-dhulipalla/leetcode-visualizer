@@ -75,6 +75,14 @@ function ResetIcon() {
   );
 }
 
+function GitHubIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 .5A11.5 11.5 0 0 0 8.36 22.9c.58.11.79-.25.79-.56v-2.02c-3.22.7-3.9-1.39-3.9-1.39-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.16.08 1.78 1.2 1.78 1.2 1.04 1.77 2.72 1.26 3.38.96.11-.75.41-1.26.74-1.55-2.57-.29-5.27-1.28-5.27-5.72 0-1.26.45-2.3 1.19-3.11-.12-.29-.52-1.47.11-3.07 0 0 .98-.31 3.18 1.19A10.98 10.98 0 0 1 12 6.03c.98 0 1.96.13 2.88.39 2.2-1.5 3.17-1.19 3.17-1.19.64 1.6.24 2.78.12 3.07.74.81 1.18 1.85 1.18 3.11 0 4.45-2.71 5.43-5.29 5.71.42.36.79 1.08.79 2.18v3.04c0 .31.21.68.8.56A11.5 11.5 0 0 0 12 .5z" />
+    </svg>
+  );
+}
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
@@ -1874,6 +1882,16 @@ function App() {
           <ResetIcon />
           Reset
         </button>
+        <a
+          className="github-button"
+          href="https://github.com/krishna-dhulipalla/leetcode-visualizer"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Star this project on GitHub"
+        >
+          <GitHubIcon />
+          <span>Star</span>
+        </a>
       </header>
 
       <div className="workspace">
